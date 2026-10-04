@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Smart Camera</title>
+  <meta name="description" content="On-device AI photography assistant. Pose, composition, zoom and lighting guidance with automatic capture. No cloud, no uploads." />
+  <meta name="theme-color" content="#0b0b0f" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Smart Camera" />
+  <meta name="format-detection" content="telephone=no" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/favicon.ico" sizes="32x32" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="css/app.css" />
+  <link rel="modulepreload" href="js/main.js" />
+</head>
+<body>
+  <noscript><div class="fatal">Smart Camera needs JavaScript to run the on-device vision models.</div></noscript>
+
+  <main id="app" class="app" data-state="booting">
+    <!-- Camera preview -->
+    <div id="viewport" class="viewport">
+      <video id="video" class="video" autoplay playsinline muted></video>
+      <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
+      <div id="flash" class="flash" aria-hidden="true"></div>
+      <div id="focusRing" class="focus-ring" aria-hidden="true"></div>
+    </div>
+
+    <!-- Top bar -->
+    <header class="topbar">
+      <button id="btnFlash" class="icon-btn" aria-label="Flash" data-state="off" title="Flash">
+        <svg viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+        <span class="icon-badge" id="flashBadge"></span>
+      </button>
+      <button id="btnAI" class="pill-btn ai-pill" aria-pressed="true" title="On-device AI">
+        <span class="dot"></span><span id="aiLabel">ON-DEVICE</span>
+      </button>
+      <div class="topbar-right">
+        <button id="btnTimer" class="icon-btn" aria-label="Timer" title="Timer">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v4l3 2M9 2h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span class="icon-badge" id="timerBadge"></span>
+        </button>
+        <button id="btnPanel" class="icon-btn" aria-label="More controls" aria-expanded="false" title="Controls">
+          <svg viewBox="0 0 24 24"><path d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Guidance -->
+    <div class="guidance" id="guidance" aria-live="polite">
+      <div class="guide-pill" id="guidePill" data-tone="neutral">
+        <span class="guide-arrow" id="guideArrow"></span>
+        <span class="guide-text" id="guideText">Starting camera…</span>
+      </div>
+      <div class="guide-sub" id="guideSub"></div>
+    </div>
+
+    <!-- Countdown -->
+    <div class="countdown" id="countdown" aria-hidden="true"><span id="countdownText">Perfect</span><div class="countdown-ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="45"/><circle id="countdownArc" cx="50" cy="50" r="45"/></svg></div></div>
+
+    <!-- Scores (Smart Pose) -->
+    <aside class="scores" id="scores" hidden>
+      <div class="score-row"><span>Pose</span><i><b id="scPose"></b></i><span id="scPoseV">–</span></div>
+      <div class="score-row"><span>Framing</span><i><b id="scFrame"></b></i><span id="scFrameV">–</span></div>
+      <div class="score-row"><span>Lighting</span><i><b id="scLight"></b></i><span id="scLightV">–</span></div>
+      <div class="score-row"><span>Stability</span><i><b id="scStab"></b></i><span id="scStabV">–</span></div>
+      <div class="score-row total"><span>Overall</span><i><b id="scAll"></b></i><span id="scAllV">–</span></div>
+    </aside>
+
+    <!-- Horizon / level readout -->
+    <div class="level-readout" id="levelReadout" hidden><span id="levelText">LEVEL</span></div>
+
+    <!-- Scene chip -->
+    <div class="scene-chip" id="sceneChip" hidden></div>
+
+    <!-- Bottom controls -->
+    <footer class="bottombar">
+      <div class="zoom-row" id="zoomRow">
+        <div class="zoom-chips" id="zoomChips"></div>
+        <div class="zoom-hint" id="zoomHint" hidden></div>
+      </div>
+      <input id="zoomSlider" class="zoom-slider" type="range" min="1" max="10" step="0.01" value="1" aria-label="Zoom" hidden />
+      <div class="modes" id="modes" role="tablist">
+        <button class="mode" role="tab" data-mode="photo">PHOTO</button>
+        <button class="mode" role="tab" data-mode="smart">SMART PHOTO</button>
+        <button class="mode" role="tab" data-mode="pose">SMART POSE</button>
+      </div>
+      <div class="shutter-row">
+        <button id="btnGallery" class="thumb" aria-label="Open photo library"><img id="thumbImg" alt="" hidden /><span class="thumb-count" id="thumbCount" hidden></span></button>
+        <button id="btnShutter" class="shutter" aria-label="Take photo"><span class="shutter-inner"></span></button>
+        <button id="btnFlip" class="icon-btn round" aria-label="Switch camera" title="Switch camera">
+          <svg viewBox="0 0 24 24"><path d="M20 7h-3l-2-2H9L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 13a3 3 0 0 0 5.2 2.1M15 13a3 3 0 0 0-5.2-2.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 16h2v-2M10 10H8v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </footer>
+
+    <!-- Expandable control panel -->
+    <section class="panel" id="panel" aria-hidden="true">
+      <div class="panel-handle"></div>
+      <div class="panel-grid">
+        <label class="ctl"><span>AI assist</span><input type="checkbox" id="ctlAI" checked /></label>
+        <label class="ctl"><span>Grid</span><input type="checkbox" id="ctlGrid" /></label>
+        <label class="ctl"><span>Horizon</span><input type="checkbox" id="ctlHorizon" checked /></label>
+        <label class="ctl"><span>Skeleton</span><input type="checkbox" id="ctlSkeleton" /></label>
+        <label class="ctl"><span>Scores</span><input type="checkbox" id="ctlScores" checked /></label>
+        <label class="ctl"><span>Sound</span><input type="checkbox" id="ctlSound" checked /></label>
+        <label class="ctl"><span>Mirror front</span><input type="checkbox" id="ctlMirror" checked /></label>
+        <label class="ctl"><span>Haptics</span><input type="checkbox" id="ctlHaptics" checked /></label>
+      </div>
+      <div class="ctl-row">
+        <span>Exposure</span>
+        <input type="range" id="ctlExposure" min="-2" max="2" step="0.1" value="0" aria-label="Exposure compensation" />
+        <b id="ctlExposureV">0.0</b>
+      </div>
+      <div class="ctl-row">
+        <span>Filter</span>
+        <div class="filters" id="filters"></div>
+      </div>
+      <div class="ctl-row">
+        <span>Lens</span>
+        <select id="ctlLens" aria-label="Lens"></select>
+      </div>
+      <div class="ctl-row">
+        <span>Auto-capture threshold</span>
+        <input type="range" id="ctlThreshold" min="60" max="95" step="1" value="82" />
+        <b id="ctlThresholdV">82</b>
+      </div>
+      <div class="ctl-row">
+        <span>Hold time</span>
+        <input type="range" id="ctlHold" min="0.5" max="2.0" step="0.05" value="1.0" />
+        <b id="ctlHoldV">1.0s</b>
+      </div>
+      <div class="ctl-row">
+        <span>Directions</span>
+        <select id="ctlDirection" aria-label="Direction convention"><option value="camera">Camera: "move right" = pan camera right</option><option value="subject">Subject: "move right" = subject goes right</option></select>
+      </div>
+      <div class="ctl-row">
+        <span>Analysis rate</span>
+        <select id="ctlRate" aria-label="Analysis rate"><option value="auto">Auto (thermal aware)</option><option value="high">High</option><option value="balanced">Balanced</option><option value="low">Low</option></select>
+      </div>
+      <div class="panel-foot">
+        <span id="perfReadout" class="perf">—</span>
+        <button id="btnAbout" class="link-btn">About &amp; privacy</button>
+      </div>
+    </section>
+
+    <!-- Review (after capture) -->
+    <section class="review" id="review" hidden>
+      <div class="review-img-wrap"><img id="reviewImg" alt="Captured photo" /></div>
+      <div class="review-meta" id="reviewMeta"></div>
+      <div class="review-filters" id="reviewFilters"></div>
+      <div class="review-actions">
+        <button id="rvRetake" class="action">Retake</button>
+        <button id="rvFavorite" class="action" aria-pressed="false">♡</button>
+        <button id="rvShare" class="action primary">Save / Share</button>
+        <button id="rvDone" class="action">Done</button>
+      </div>
+    </section>
+
+    <!-- Library -->
+    <section class="library" id="library" hidden>
+      <header class="library-head"><button id="libClose" class="link-btn">‹ Camera</button><h2>Smart Camera</h2><span id="libCount"></span></header>
+      <div class="library-grid" id="libraryGrid"></div>
+      <p class="library-note">Photos are stored only on this device, inside the app. Use Save / Share to put a copy in your Photos library.</p>
+    </section>
+
+    <!-- Permission / error gate -->
+    <section class="gate" id="gate">
+      <div class="gate-card">
+        <img src="icons/icon-192.png" width="72" height="72" alt="" />
+        <h1>Smart Camera</h1>
+        <p id="gateText">An on-device photography assistant. Pose detection, composition, zoom and lighting guidance run locally in your browser. Nothing is uploaded.</p>
+        <button id="gateStart" class="action primary">Open camera</button>
+        <p class="gate-fine" id="gateFine">Requires camera access. Works offline once installed.</p>
+      </div>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <dialog id="about" class="about">
+      <h2>About Smart Camera</h2>
+      <p>Everything here runs locally: camera frames are analysed in your browser with on-device models (MediaPipe Pose, face and object detection, scene classification). No frames, poses or photos are sent anywhere. No analytics. No face recognition. No biometric storage.</p>
+      <p>Photos are kept in this device's app storage until you save or share them. The original capture is never modified; filters are applied to copies only.</p>
+      <p id="aboutCaps"></p>
+      <form method="dialog"><button class="action primary">Close</button></form>
+    </dialog>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

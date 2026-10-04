@@ -1,0 +1,5 @@
+*.task binary
+*.tflite binary
+*.wasm binary
+*.png binary
+*.ico binary
