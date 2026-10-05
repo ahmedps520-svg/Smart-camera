@@ -1,6 +1,7 @@
 import { Emitter } from '../util/events.js';
 import { FILTERS } from '../config/defaults.js';
-import { renderStill } from '../render/LookRenderer.js';
+import { renderStill, ADJUST_DEFAULTS } from '../render/LookRenderer.js';
+import { autoEnhance } from '../render/AutoEnhance.js';
 import { PhotoLibrary } from '../library/PhotoLibrary.js';
 
 const $ = (id) => document.getElementById(id);
@@ -9,8 +10,9 @@ const $ = (id) => document.getElementById(id);
  * Photo viewer. Swipe left/right to browse every photo, swipe down to return to
  * the camera. The stored original is never modified: looks are rendered on
  * demand (screen-size here, full resolution on Save/Share) and remembered per photo.
- * Emits 'close', 'retake', 'grid'.
+ * Emits 'close', 'retake', 'grid', 'deleted'.
  */
+const SLIDERS = [['light', 'Light'], ['contrast', 'Contrast'], ['warmth', 'Warmth'], ['saturation', 'Colour'], ['vignette', 'Vignette'], ['depth', 'Depth']];
 export class ReviewView extends Emitter {
   constructor(library, toast) {
     super();
@@ -18,7 +20,9 @@ export class ReviewView extends Emitter {
     this.el = { root: $('review'), stage: $('rvStage'), img: $('reviewImg'), meta: $('reviewMeta'), filters: $('reviewFilters'), retake: $('rvRetake'), fav: $('rvFavorite'), share: $('rvShare'), done: $('rvDone'), strength: $('rvStrength'), strengthV: $('rvStrengthV'), counter: $('rvCounter'), back: $('rvBack'), all: $('rvAll') };
     this.list = []; this.index = 0; this.record = null;
     this.look = 'natural'; this.strength = 1; this.recommended = 'natural';
-    this.url = null; this.bitmap = null; this.renderToken = 0;
+    this.url = null; this.bitmap = null; this.maskBitmap = null; this.renderToken = 0;
+    this.adjust = { ...ADJUST_DEFAULTS }; this.depth = 0;
+    this.buildEditor();
     for (const f of FILTERS) { const b = document.createElement('button'); b.className = 'filter-chip'; b.dataset.id = f.id; b.textContent = f.id === 'natural' ? 'Original' : f.name; this.el.filters.appendChild(b); }
     this.el.retake.addEventListener('click', () => { this.hide(); this.emit('retake'); });
     this.el.done.addEventListener('click', () => { this.hide(); this.emit('close'); });
@@ -29,6 +33,10 @@ export class ReviewView extends Emitter {
     this.el.filters.addEventListener('click', (ev) => { const b = ev.target.closest('.filter-chip'); if (b) { this.setLook(b.dataset.id); this.persistLook(); } });
     this.el.strength.addEventListener('input', () => { this.strength = parseFloat(this.el.strength.value); this.el.strengthV.textContent = `${Math.round(this.strength * 100)}%`; this.scheduleRender(); this.persistLook(); });
     this.bindSwipe();
+    for (const t of document.querySelectorAll('.review-tab')) t.addEventListener('click', () => this.setTab(t.dataset.tab));
+    $('rvAuto').addEventListener('click', () => this.auto());
+    $('rvResetEdit').addEventListener('click', () => { this.adjust = { ...ADJUST_DEFAULTS }; this.depth = this.record?.mask ? (this.record.meta?.depthDefault ?? 0.6) : 0; this.syncSliders(); this.scheduleRender(); this.persistLook(); });
+    $('rvDelete').addEventListener('click', () => this.remove());
     document.addEventListener('keydown', (e) => {
       if (this.el.root.hidden) return;
       if (e.key === 'ArrowLeft') this.go(-1); else if (e.key === 'ArrowRight') this.go(1); else if (e.key === 'Escape') { this.hide(); this.emit('close'); }
@@ -61,19 +69,23 @@ export class ReviewView extends Emitter {
     for (const b of this.el.filters.querySelectorAll('.filter-chip')) b.classList.toggle('recommended', b.dataset.id === this.recommended && b.dataset.id !== 'natural');
     this.strength = strength ?? m.strength ?? 1;
     this.el.strength.value = this.strength; this.el.strengthV.textContent = `${Math.round(this.strength * 100)}%`;
-    const bits = [`${this.record.width}×${this.record.height}`, m.scene, m.auto ? 'auto' : null, m.selfie ? 'selfie' : null].filter(Boolean);
-    this.el.meta.textContent = bits.join('  ·  ');
+    const bits = [`${this.record.width}×${this.record.height}`, m.scene, m.portrait ? 'depth' : null, m.burst ? `best of ${m.burst}` : null, m.trigger || (m.auto ? 'auto' : null), m.selfie ? 'selfie' : null].filter(Boolean);
+    this.el.meta.textContent = [...new Set(bits)].join('  ·  ');
     this.el.counter.textContent = `${i + 1} / ${this.list.length}`;
     this.renderFav();
-    this.bitmap?.close?.();
+    this.adjust = { ...ADJUST_DEFAULTS, ...(m.adjust || {}) };
+    this.depth = this.record.mask ? (m.depth ?? 0.6) : 0;
+    this.syncSliders();
+    this.bitmap?.close?.(); this.maskBitmap?.close?.(); this.maskBitmap = null;
     this.bitmap = await createImageBitmap(this.record.blob);
+    if (this.record.mask) this.maskBitmap = await createImageBitmap(this.record.mask);
     this.setLook(initialFilter || m.look || 'natural');
   }
 
   hide() {
     this.el.root.hidden = true;
     if (this.url) { URL.revokeObjectURL(this.url); this.url = null; }
-    this.bitmap?.close?.(); this.bitmap = null;
+    this.bitmap?.close?.(); this.bitmap = null; this.maskBitmap?.close?.(); this.maskBitmap = null;
     this.el.img.removeAttribute('src');
   }
 
@@ -88,11 +100,75 @@ export class ReviewView extends Emitter {
 
   persistLook() {
     clearTimeout(this._p);
-    const rec = this.record, look = this.look, strength = this.strength;
+    const rec = this.record, look = this.look, strength = this.strength, adjust = { ...this.adjust }, depth = this.depth;
     this._p = setTimeout(async () => {
-      const updated = await this.library.update(rec.id, { meta: { ...(rec.meta || {}), look, strength } }).catch(() => null);
+      const updated = await this.library.update(rec.id, { meta: { ...(rec.meta || {}), look, strength, adjust, depth } }).catch(() => null);
       if (updated) { const i = this.list.findIndex((r) => r.id === rec.id); if (i >= 0) this.list[i] = updated; if (this.record?.id === rec.id) this.record = updated; }
     }, 300);
+  }
+
+  renderOptions() {
+    return { lookId: this.look, strength: this.strength, adjust: this.adjust, depth: this.maskBitmap && this.depth > 0 ? { mask: this.maskBitmap, amount: this.depth } : null };
+  }
+
+  isEdited() {
+    return (this.look !== 'natural' && this.strength > 0) || Object.keys(ADJUST_DEFAULTS).some((k) => Math.abs(this.adjust[k] || 0) > 1e-3) || (this.maskBitmap && this.depth > 0);
+  }
+
+  buildEditor() {
+    const grid = $('editSliders'); this.sliders = {};
+    for (const [key, label] of SLIDERS) {
+      const name = document.createElement('span'); name.textContent = label;
+      const input = document.createElement('input'); input.type = 'range'; input.step = '0.01';
+      input.min = key === 'depth' || key === 'vignette' ? '0' : '-1'; input.max = '1'; input.setAttribute('aria-label', label);
+      const val = document.createElement('b');
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        if (key === 'depth') this.depth = v; else this.adjust[key] = v;
+        val.textContent = this.sliderText(key, v); this.scheduleRender(); this.persistLook();
+      });
+      grid.append(name, input, val);
+      this.sliders[key] = { name, input, val };
+    }
+  }
+
+  sliderText(key, v) { return key === 'depth' ? `f/${(16 * Math.pow(1.4 / 16, v)).toFixed(1)}` : `${v > 0 ? '+' : ''}${Math.round(v * 100)}`; }
+
+  syncSliders() {
+    for (const [key, s] of Object.entries(this.sliders || {})) {
+      const v = key === 'depth' ? this.depth : (this.adjust[key] ?? 0);
+      s.input.value = v; s.val.textContent = this.sliderText(key, v);
+      const hide = key === 'depth' && !this.record?.mask;
+      s.name.hidden = hide; s.input.hidden = hide; s.val.hidden = hide;
+    }
+  }
+
+  setTab(tab) {
+    for (const t of document.querySelectorAll('.review-tab')) t.setAttribute('aria-selected', String(t.dataset.tab === tab));
+    $('paneLooks').hidden = tab !== 'looks'; $('paneEdit').hidden = tab !== 'edit';
+  }
+
+  /** One-tap enhance from a small sample of the original. */
+  auto() {
+    if (!this.bitmap) return;
+    const c = document.createElement('canvas'); const k = 256 / Math.max(this.bitmap.width, this.bitmap.height);
+    c.width = Math.max(1, Math.round(this.bitmap.width * k)); c.height = Math.max(1, Math.round(this.bitmap.height * k));
+    const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(this.bitmap, 0, 0, c.width, c.height);
+    this.adjust = { ...this.adjust, ...autoEnhance(ctx.getImageData(0, 0, c.width, c.height)) };
+    this.syncSliders(); this.scheduleRender(); this.persistLook();
+    this.toast.show('Auto-enhanced', 1200);
+  }
+
+  /** Delete this capture from the app's own library (never from the system Photos app). */
+  async remove() {
+    if (!this.record) return;
+    if (!confirm('Delete this photo from Smart Camera? Copies you already saved to Photos are not affected.')) return;
+    const id = this.record.id;
+    await this.library.remove(id);
+    this.list.splice(this.index, 1);
+    this.emit('deleted', { id, remaining: this.list.length });
+    if (!this.list.length) { this.hide(); this.emit('close'); return; }
+    await this.load(Math.min(this.index, this.list.length - 1));
   }
 
   scheduleRender(delay = 30) { clearTimeout(this._t); this._t = setTimeout(() => this.render(), delay); }
@@ -102,7 +178,7 @@ export class ReviewView extends Emitter {
     const token = ++this.renderToken;
     this.el.img.classList.add('busy');
     const side = Math.min(2048, Math.round(Math.max(window.innerWidth, window.innerHeight) * Math.min(2, window.devicePixelRatio || 1)));
-    const canvas = renderStill(this.bitmap, { lookId: this.look, strength: this.strength, maxSide: side });
+    const canvas = renderStill(this.bitmap, { ...this.renderOptions(), maxSide: side });
     const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.9));
     if (token !== this.renderToken || !blob) return;
     if (this.url) URL.revokeObjectURL(this.url);
@@ -154,9 +230,9 @@ export class ReviewView extends Emitter {
     if (!this.record) return;
     let blob = this.record.blob;
     const name = `SmartCamera-${new Date(this.record.createdAt).toISOString().replace(/[:.]/g, '-')}${this.look !== 'natural' ? `-${this.look}` : ''}.jpg`;
-    if (this.look !== 'natural' && this.strength > 0) {
-      this.toast.show('Applying look…');
-      const canvas = renderStill(this.bitmap || await createImageBitmap(this.record.blob), { lookId: this.look, strength: this.strength });
+    if (this.isEdited()) {
+      this.toast.show('Applying edits…');
+      const canvas = renderStill(this.bitmap || await createImageBitmap(this.record.blob), this.renderOptions());
       blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
     }
     const result = await PhotoLibrary.export(blob, name);

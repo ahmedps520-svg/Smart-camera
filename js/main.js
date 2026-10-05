@@ -22,7 +22,11 @@ import { PhotographyReasoner } from './reasoning/PhotographyReasoner.js';
 import { AutoCaptureController } from './capture/AutoCaptureController.js';
 import { PhotoProcessor } from './capture/PhotoProcessor.js';
 import { PhotoLibrary } from './library/PhotoLibrary.js';
-import { LookRenderer, lookParams, cssFallback } from './render/LookRenderer.js';
+import { LookRenderer, composeParams, cssFallback, downscale, blurBackgroundWidth, maskToCanvas } from './render/LookRenderer.js';
+import { summarizeExpressions, minEyesOpen, expressionNear } from './analysis/Expressions.js';
+import { HoldTrigger, handRaised, isSmiling } from './capture/Triggers.js';
+import { BurstSelector, sharpness } from './capture/BurstSelector.js';
+import { HistogramView } from './ui/Histogram.js';
 import { Overlay } from './ui/Overlay.js';
 import { Controls } from './ui/Controls.js';
 import { ReviewView } from './ui/ReviewView.js';
@@ -33,7 +37,7 @@ import { Sounds } from './ui/Sounds.js';
 import { clamp01 } from './util/math.js';
 
 const $ = (id) => document.getElementById(id);
-const BLOCKER_TEXT = { pose: 'pose', framing: 'framing', stability: 'hold still', lighting: 'more light', overall: 'overall score', group: 'everyone still', 'same pose': 'new pose for another shot' };
+const BLOCKER_TEXT = { pose: 'pose', framing: 'framing', stability: 'hold still', lighting: 'more light', overall: 'overall score', group: 'everyone still', 'same pose': 'new pose for another shot', eyes: 'eyes open' };
 
 class SmartCameraApp {
   constructor() {
@@ -70,6 +74,11 @@ class SmartCameraApp {
     if (this.renderer.ok) $('app').classList.add('gpu');
     this.state = { tracked: null, composition: null, lighting: null, scene: 'outdoor', scores: null, rec: null, aligned: false, holdProgress: 0, zoomAdvice: null, filterRec: null, autoState: 'IDLE' };
     this.capturing = false; this.visionReady = false; this.started = false; this.switching = false;
+    this.histogram = new HistogramView($('histogram'));
+    this.handTrigger = new HoldTrigger({ holdMs: 500, cooldownMs: 6000 });
+    this.smileTrigger = new HoldTrigger({ holdMs: 350, cooldownMs: 4000 });
+    this.portraitReady = false; this.expressionsReady = false; this.maskCoverage = 0; this.expressions = [];
+    this.bursting = false;
     this.fps = { frames: 0, last: performance.now(), value: 0 };
   }
 
@@ -139,6 +148,7 @@ class SmartCameraApp {
       this.vision.on('analysis', (a) => this.onAnalysis(a));
       this.vision.on('error', () => {});
       this.syncVisionRunning();
+      this.syncOptionalStages();
       this.controls.setAI({ enabled: this.settings.get('aiEnabled'), busy: false });
       $('aboutCaps').textContent = `Vision runtime: MediaPipe Tasks (${this.backend.delegate} delegate). Preview: ${this.renderer.ok ? 'GPU (WebGL)' : 'CSS fallback'}. ${this.camera.lens.describe()}. Motion sensors: ${this.motion.available ? 'available' : 'unavailable'}.`;
     } catch (e) {
@@ -209,15 +219,35 @@ class SmartCameraApp {
     if (this.previewCanvas.width !== cw || this.previewCanvas.height !== ch) { this.previewCanvas.width = cw; this.previewCanvas.height = ch; }
   }
 
-  /** GPU preview: draws every new camera frame with the crop, mirror and look applied. */
+  /**
+   * Preview loop: draws every new camera frame with crop, mirror, look, live
+   * portrait blur and highlight warning (GPU), and feeds the histogram.
+   */
   startPreviewLoop() {
-    if (!this.renderer.ok) return;
     const useRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+    const bgCanvas = document.createElement('canvas');
+    let lastMask = null, n = 0;
+    this.depthLive = 0;
     const frame = () => {
       if (this.video.readyState >= 2 && this.video.videoWidth && !document.hidden) {
-        const s = this.settings;
-        const ok = this.renderer.draw(this.video, { crop: this.viewCrop(), mirror: this.camera.mirror, params: lookParams(s.get('filter')), strength: s.get('filterStrength'), seed: (performance.now() % 1000) / 1000 });
-        if (!ok) { this.renderer.ok = false; $('app').classList.remove('gpu'); this.applyPreviewFallback(); return; }
+        const s = this.settings; const crop = this.viewCrop(); n++;
+        if (s.get('histogram')) this.histogram.update(this.video, crop);
+        if (this.renderer.ok) {
+          // Portrait: blur fades in only when a person mask is available.
+          const mask = this.vision.last.mask;
+          const wantDepth = s.get('mode') === 'portrait' && this.portraitReady && mask && this.maskCoverage > 0.03 ? Math.max(0.05, s.get('portraitBlur')) : 0;
+          this.depthLive += (wantDepth - this.depthLive) * 0.15;
+          if (this.depthLive > 0.01) {
+            if (mask !== lastMask) { this.renderer.setMask(mask); lastMask = mask; }
+            if (n % 2 === 0 || !this._bgReady) {
+              const vw = this.video.videoWidth, vh = this.video.videoHeight;
+              downscale(this.video, crop.x * vw, crop.y * vh, crop.w * vw, crop.h * vh, blurBackgroundWidth(Math.max(this.depthLive, 0.2)), bgCanvas);
+              this.renderer.setBackground(bgCanvas); this._bgReady = true;
+            }
+          }
+          const ok = this.renderer.draw(this.video, { crop, mirror: this.camera.mirror, params: composeParams(s.get('filter'), s.get('filterStrength')), seed: (performance.now() % 1000) / 1000, depth: this.depthLive > 0.01 ? this.depthLive : 0, zebra: s.get('zebra') });
+          if (!ok) { this.renderer.ok = false; $('app').classList.remove('gpu'); this.applyPreviewFallback(); }
+        }
       }
       if (useRVFC) this.video.requestVideoFrameCallback(frame); else requestAnimationFrame(frame);
     };
@@ -234,6 +264,8 @@ class SmartCameraApp {
     const c = this.controls, s = this.settings;
     c.on('mode', (m) => { s.set('mode', m); Haptics.tap(); });
     c.on('shutter', () => this.capture({ auto: false }));
+    c.on('burstStart', () => this.burstStart());
+    c.on('burstEnd', () => this.burstEnd());
     c.on('flip', () => this.switchFacing(this.selfie ? 'environment' : 'user'));
     c.on('selfie', () => this.switchFacing(this.selfie ? 'environment' : 'user'));
     c.on('flash', (v) => { s.set('flash', v); Haptics.tap(); });
@@ -253,6 +285,7 @@ class SmartCameraApp {
     this.libraryView.on('close', () => this.resumeAfterReview());
     this.libraryView.on('open', (rec) => { this.libraryView.hide(); this.review.show(rec); });
     this.review.on('grid', () => { this.vision.stop(); this.libraryView.show(); });
+    this.review.on('deleted', async ({ remaining }) => this.refreshThumb(remaining));
     this.autoCapture.on('capture', () => this.capture({ auto: true }));
     this.autoCapture.on('state', ({ state, progress }) => this.onAutoState(state, progress));
     this.autoCapture.on('cancel', () => { this.sounds.cancel(); this.controls.setCountdown(null); });
@@ -285,6 +318,11 @@ class SmartCameraApp {
     c.setFilter(s.get('filter'), this.state.filterRec?.id);
     if (!this.renderer.ok) this.applyPreviewFallback();
     this.overlay.options.grid = s.get('grid'); this.overlay.options.horizon = s.get('horizon'); this.overlay.options.skeleton = s.get('skeleton');
+    $('histogram').hidden = !s.get('histogram');
+    c.setAperture(mode === 'portrait');
+    if (key === 'portraitBlur' || key === undefined) { $('apertureSlider').value = s.get('portraitBlur'); c.setApertureLabel(s.get('portraitBlur')); }
+    if (key === 'grid' || key === undefined) $('ctlGrid').value = s.get('grid');
+    this.syncOptionalStages();
     this.sounds.enabled = s.get('sound'); Haptics.enabled = s.get('haptics');
     this.autoCapture.configure({ holdMs: s.get('holdMs'), thresholds: { overall: s.get('autoThreshold') } });
     this.vision.governor.setMode(s.get('rate'));
@@ -297,6 +335,29 @@ class SmartCameraApp {
       this.syncVisionRunning();
       if (!s.get('aiEnabled') || mode === 'photo') { this.controls.setGuide(null); this.controls.setScores(null, false); this.controls.setScene(null, false); this.overlay.draw({ mode: 'photo', motion: this.motion.read(), now: performance.now() }); }
     }
+  }
+
+  /**
+   * Optional models load on first use: person segmentation for Portrait, and the
+   * face mesh (smile / blink) for the smile shutter, blink guard and bursts.
+   */
+  syncOptionalStages() {
+    const s = this.settings, mode = s.get('mode'), ai = s.get('aiEnabled') && this.visionReady;
+    const wantSegment = ai && mode === 'portrait';
+    const wantExpr = ai && mode !== 'photo' && (s.get('smileTrigger') || (s.get('blinkGuard') && mode === 'pose') || this.bursting);
+    const load = (flag, busyFlag, fn, label) => {
+      if (this[flag] || this[busyFlag]) return;
+      this[busyFlag] = true;
+      fn().then(() => { this[flag] = true; this.syncOptionalStages(); })
+        .catch((e) => { console.warn(e); this.toast.show(`${label} is not available on this device`); })
+        .finally(() => { this[busyFlag] = false; });
+    };
+    if (wantSegment) load('portraitReady', '_loadingSeg', () => this.backend.ensureSegmenter(), 'Portrait mode');
+    if (wantExpr) load('expressionsReady', '_loadingExpr', () => this.backend.ensureFaceMesh(), 'Smile and blink detection');
+    this.vision.enabled.segment = wantSegment && this.portraitReady && (this.vision.failures.segment || 0) < 3;
+    this.vision.enabled.expressions = wantExpr && this.expressionsReady && (this.vision.failures.expressions || 0) < 3;
+    if (!this.vision.enabled.segment) { this.vision.last.mask = null; this.maskCoverage = 0; }
+    if (!this.vision.enabled.expressions) { this.vision.last.expressions = []; this.expressions = []; }
   }
 
   syncVisionRunning() {
@@ -340,7 +401,14 @@ class SmartCameraApp {
     const selfie = this.selfie;
 
     // Layer 1 → structured data, in view coordinates (what the user actually sees).
-    const view = transformAnalysis(a, this.viewCrop());
+    const crop = this.viewCrop();
+    const view = transformAnalysis(a, crop);
+    const exprs = this.vision.enabled.expressions ? summarizeExpressions(a.expressions, crop) : [];
+    this.expressions = exprs;
+    if (a.ran.segment && a.mask) {
+      let on = 0, n = 0; for (let i = 0; i < a.mask.data.length; i += 7) { n++; if (a.mask.data[i] > 128) on++; }
+      this.maskCoverage = n ? on / n : 0;
+    }
     const tracked = this.tracker.update({ people: view.people, faces: view.faces, t: now });
     const lighting = a.ran.lighting ? this.lighting.analyze(a.pixels, tracked.primary, motion.stability) : this.lighting.last;
     if (a.frame === 1 || a.ran.scene || a.ran.objects || a.frame % 6 === 0) this.state.scene = this.sceneClassifier.update({ sceneLabels: a.sceneLabels, objects: view.objects, tracked, lighting }).scene;
@@ -358,17 +426,18 @@ class SmartCameraApp {
 
     // Layer 2 → validated recommendation. Smart Photo freezes its instruction while the
     // phone is moving or the subject is momentarily lost, so it never flips mid-move.
-    const smart = mode === 'smart';
+    const smart = mode === 'smart' || mode === 'portrait';
     const freeze = smart && ((motion.available && motion.stability < SMART_PHOTO.freezeBelowStability) || !!tracked.coasting);
-    const { stable: rec, raw } = (smart ? this.photoReasoner : this.reasoner).update({ mode, scene, tracked, composition, pose, lighting, motion, zoom: { current: this.camera.zoom, presets, advice: zoomAdvice }, group, scores }, now, { freeze });
-    this.vision.boost.objects = smart && tracked.count === 0 ? 8 : 0;
+    const { stable: rec, raw } = (smart ? this.photoReasoner : this.reasoner).update({ mode: smart ? 'smart' : mode, scene, tracked, composition, pose, lighting, motion, zoom: { current: this.camera.zoom, presets, advice: zoomAdvice }, group, scores }, now, { freeze });
+    this.vision.boost.objects = mode === 'smart' && tracked.count === 0 ? 8 : 0;
     const blocking = composition.issues.some((i) => i.severity >= 2) || (group?.issues.some((i) => i.severity >= 2) ?? false);
     const aligned = composition.hasSubject && !blocking && Math.hypot(composition.deviation.dx, composition.deviation.dy) <= COMPOSITION.tolerances.position * 1.3 && (motion.flat || Math.abs(motion.rollDeg) <= COMPOSITION.levelToleranceDeg * 3);
 
     // Auto capture (Smart Pose).
     let holdProgress = 0, blockers = [];
     if (mode === 'pose') {
-      const st = this.autoCapture.update({ scores, subject: tracked.primary, group, now });
+      const eyesOpen = s.get('blinkGuard') && exprs.length ? minEyesOpen(exprs) : null;
+      const st = this.autoCapture.update({ scores, subject: tracked.primary, group, now, eyesOpen });
       this.state.autoState = st;
       holdProgress = (st === 'HOLDING' || st === 'COUNTDOWN') ? this.autoCapture.progress : 0;
       blockers = st === 'MONITORING' ? this.autoCapture.blockers : [];
@@ -376,8 +445,15 @@ class SmartCameraApp {
     }
     Object.assign(this.state, { tracked, composition, lighting, scores, rec, aligned, holdProgress, zoomAdvice, pose, group });
 
+    // Hands-free triggers: raise a hand (3 s timer) or smile (instant).
+    if (!this.capturing && !this.bursting) {
+      if (this.handTrigger.update(s.get('handTrigger') && tracked.subjects.some(handRaised), now)) { this.smileTrigger.block(now); this.capture({ auto: true, timer: 3, trigger: 'hand' }); }
+      else if (s.get('smileTrigger') && this.smileTrigger.update(isSmiling(expressionNear(exprs, tracked.primary?.head)), now)) { this.handTrigger.block(now); this.capture({ auto: true, trigger: 'smile' }); }
+    }
+    this.controls.setTrigger(this.handTrigger.progress > 0.2 && !this.capturing ? '✋ Hold your hand up…' : null);
+
     // UI.
-    if (smart) { this.renderSmartPhoto({ rec, composition, tracked, motion, aligned, zoomAdvice, now }); return; }
+    if (smart) { this.renderSmartPhoto({ rec, composition, tracked, motion, aligned, zoomAdvice, now, portrait: mode === 'portrait' }); return; }
     let guide = this.phrase(rec || (raw.recommendation !== 'NONE' ? raw : null));
     let sub = this.subline({ lighting, zoomAdvice, pose, tracked, mode, raw });
     if (mode === 'pose' && tracked.primary) {
@@ -399,7 +475,7 @@ class SmartCameraApp {
    * Smart Photo UI: a yellow ring around the subject and one short instruction
    * beside it. No scores, no target box, no sub-lines.
    */
-  renderSmartPhoto({ rec, composition, tracked, motion, aligned, zoomAdvice, now }) {
+  renderSmartPhoto({ rec, composition, tracked, motion, aligned, zoomAdvice, now, portrait = false }) {
     const s = this.settings;
     const short = this.smartInstruction(rec);
     const perfect = !!rec && (rec.code === 'PERFECT' || rec.code === 'EVERYONE_IN_FRAME') && rec.captureReady && aligned;
@@ -407,12 +483,18 @@ class SmartCameraApp {
     this._wasPerfect = perfect;
     const hasRing = !!composition.subjectBox;
     // Without a subject, only a level/horizon hint may appear (small, at the top).
-    this.controls.setGuide(!hasRing && short && (short.code === 'LEVEL_CAMERA' || short.code === 'TILT_UP' || short.code === 'TILT_DOWN') ? { ...short, tone: 'neutral' } : null, '', { small: true });
+    let top = !hasRing && short && (short.code === 'LEVEL_CAMERA' || short.code === 'TILT_UP' || short.code === 'TILT_DOWN') ? { ...short, tone: 'neutral' } : null;
+    if (portrait) {
+      if (!this.portraitReady) top = { code: 'PORTRAIT_LOAD', text: 'Preparing portrait…', tone: 'neutral' };
+      else if (!tracked.primary || this.maskCoverage <= 0.03) top = { code: 'PORTRAIT_PERSON', text: 'Portrait works with people', tone: 'neutral' };
+      else top = { code: 'PORTRAIT', text: 'Portrait', tone: 'good' };
+    }
+    this.controls.setGuide(top, '', { small: true });
     this.controls.setScores(null, false);
     this.controls.setScene(null, false);
     this.controls.setLevel(motion, s.get('horizon'));
     this.controls.setZoom(this.camera.zoom, null);   // zoom advice appears only as the ring's label
-    this.overlay.draw({ mode: 'smart', motion, now, ring: hasRing ? { box: composition.subjectBox, coasting: !!tracked.coasting, perfect, label: perfect ? null : short } : null });
+    this.overlay.draw({ mode: 'smart', motion, now, ring: hasRing ? { box: composition.subjectBox, coasting: !!tracked.coasting, perfect, label: perfect ? null : short, hideRing: portrait } : null });
   }
 
   /** Short, single instruction for Smart Photo (or null). */
@@ -466,12 +548,18 @@ class SmartCameraApp {
   }
 
   // ---------------------------------------------------------------- capture
-  async capture({ auto }) {
-    if (this.capturing || !this.camera.isRunning) return;
+  /**
+   * @param o.auto   true for hands-free captures (no review screen afterwards)
+   * @param o.timer  seconds to count down (defaults to the timer setting for manual shots)
+   * @param o.trigger 'pose' | 'hand' | 'smile' | null — recorded with the photo
+   */
+  async capture({ auto, timer = null, trigger = null }) {
+    if (this.capturing || this.bursting || !this.camera.isRunning) return;
     this.capturing = true; this.controls.setBusy(true);
     try {
       const s = this.settings;
-      if (!auto && s.get('timer') > 0) { await this.runTimer(s.get('timer')); }
+      const wait = timer ?? (auto ? 0 : s.get('timer'));
+      if (wait > 0) await this.runTimer(wait);
       const flash = s.get('flash');
       const useTorch = this.camera.supportsTorch && (flash === 'on' || (flash === 'auto' && this.state.lighting?.isDark));
       if (useTorch) { await this.camera.setTorch(true); await new Promise((r) => setTimeout(r, 350)); }
@@ -479,23 +567,98 @@ class SmartCameraApp {
       const { w, h } = this.viewSize();
       const shot = await this.camera.capture({ viewW: w, viewH: h, mirrorOutput: this.camera.mirror });
       if (useTorch) this.camera.setTorch(false);
-      const look = s.get('filter'), strength = s.get('filterStrength');
-      const context = { subject: this.state.tracked?.primary ? { box: this.state.tracked.primary.box } : null, scene: this.state.scene, look, strength };
-      const processed = await this.processor.process(shot, context);
-      const record = await this.library.add({
-        blob: shot.blob, thumb: processed.thumb, width: shot.width, height: shot.height,
-        meta: { auto, scene: this.state.scene, scores: this.state.scores, lighting: { advice: processed.lighting.advice, score: processed.lighting.score }, filter: processed.filter.id, look, strength, zoom: this.camera.zoom, mode: s.get('mode'), selfie: this.selfie, composition: this.state.composition?.type },
-      });
+      const record = await this.saveShot(shot, { auto, trigger: trigger || (auto ? 'pose' : null) });
       this.autoCapture.markCaptured(performance.now());
+      this.handTrigger.block(performance.now(), 2500); this.smileTrigger.block(performance.now());
       this.controls.setCountdown(null);
-      const count = await this.library.count();
-      this.refreshThumb(count, record);
-      if (auto) { this.toast.show('Captured', 1400); }
-      else { this.vision.stop(); await this.review.show(record, { recommendedFilter: processed.filter.id, initialFilter: look, strength }); }
+      const label = { hand: 'Captured ✋', smile: 'Captured 😊' }[trigger] || 'Captured';
+      if (auto) this.toast.show(label, 1400);
+      else { this.vision.stop(); await this.review.show(record, { recommendedFilter: record.meta.filter, initialFilter: record.meta.look, strength: record.meta.strength }); }
     } catch (e) {
       console.error(e); this.toast.show(`Capture failed: ${e.message}`, 3000);
       this.autoCapture.markCaptured(performance.now());
     } finally { this.capturing = false; this.controls.setBusy(false); }
+  }
+
+  /**
+   * Post-capture: portrait mask (kept with the photo so the blur stays adjustable),
+   * full-resolution analysis, thumbnail, and save to the library.
+   */
+  async saveShot(shot, extraMeta = {}) {
+    const s = this.settings;
+    const look = s.get('filter'), strength = s.get('filterStrength');
+    let maskBlob = null, maskCanvas = null;
+    if (s.get('mode') === 'portrait' && this.portraitReady) {
+      try {
+        const k = 512 / Math.max(shot.width, shot.height);
+        const small = document.createElement('canvas'); small.width = Math.round(shot.width * k); small.height = Math.round(shot.height * k);
+        small.getContext('2d').drawImage(shot.canvas, 0, 0, small.width, small.height);
+        const m = this.backend.segment(small, performance.now());
+        if (m) {
+          let on = 0; for (let i = 0; i < m.data.length; i += 5) if (m.data[i] > 128) on++;
+          if (on / (m.data.length / 5) > 0.02) { maskCanvas = maskToCanvas(m); maskBlob = await new Promise((r) => maskCanvas.toBlob(r, 'image/png')); }
+        }
+      } catch (e) { console.warn('[portrait] still segmentation failed', e); }
+    }
+    const depth = maskCanvas ? { mask: maskCanvas, amount: s.get('portraitBlur') } : null;
+    const context = { subject: this.state.tracked?.primary ? { box: this.state.tracked.primary.box } : null, scene: this.state.scene, look, strength, depth };
+    const processed = await this.processor.process(shot, context);
+    const record = await this.library.add({
+      blob: shot.blob, thumb: processed.thumb, mask: maskBlob, width: shot.width, height: shot.height,
+      meta: {
+        scene: this.state.scene, scores: this.state.scores, lighting: { advice: processed.lighting.advice, score: processed.lighting.score }, filter: processed.filter.id,
+        look, strength, zoom: this.camera.zoom, mode: s.get('mode'), selfie: this.selfie, composition: this.state.composition?.type,
+        portrait: !!maskBlob, depth: maskBlob ? s.get('portraitBlur') : 0, depthDefault: maskBlob ? s.get('portraitBlur') : 0, ...extraMeta,
+      },
+    });
+    this.refreshThumb(await this.library.count(), record);
+    return record;
+  }
+
+  /**
+   * Burst: while the shutter is held, grab frames (~8/s, up to 30) and keep only
+   * the best one: sharpest, eyes open, best framing. Saved as a single photo.
+   */
+  burstStart() {
+    if (this.capturing || this.bursting || !this.camera.isRunning) return;
+    this.bursting = true; this.syncOptionalStages();
+    const selector = new BurstSelector();
+    const small = document.createElement('canvas'); small.width = 160; small.height = 160;
+    const sctx = small.getContext('2d', { willReadFrequently: true });
+    const { w, h } = this.viewSize();
+    this.controls.setBusy(true); Haptics.tap();
+    const t0 = performance.now();
+    const grab = () => {
+      if (!this.bursting) return;
+      const frame = this.camera.grabFrame({ viewW: w, viewH: h, mirrorOutput: this.camera.mirror });
+      const k = 160 / Math.max(frame.width, frame.height); small.width = Math.round(frame.width * k); small.height = Math.round(frame.height * k);
+      sctx.drawImage(frame, 0, 0, small.width, small.height);
+      const sharp = sharpness(sctx.getImageData(0, 0, small.width, small.height));
+      selector.offer({ sharp, eyesOpen: minEyesOpen(this.expressions), quality: this.state.scores?.overall ?? 70 }, () => frame);
+      this.sounds.tick(); this.controls.flashScreen();
+      this.controls.setTrigger(`Burst ${selector.frames}`);
+      if (selector.frames >= 30 || performance.now() - t0 > 4500) { this.burstEnd(); return; }
+      this._burstTimer = setTimeout(grab, 120);
+    };
+    this._burst = selector;
+    grab();
+  }
+
+  async burstEnd() {
+    if (!this.bursting) return;
+    this.bursting = false; clearTimeout(this._burstTimer);
+    const selector = this._burst; this._burst = null;
+    this.controls.setTrigger(null); this.syncOptionalStages();
+    if (!selector?.best?.payload) { this.controls.setBusy(false); return; }
+    this.capturing = true;
+    try {
+      const canvas = selector.best.payload;
+      const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
+      await this.saveShot({ blob, width: canvas.width, height: canvas.height, canvas }, { burst: selector.frames, trigger: 'burst' });
+      Haptics.success();
+      this.toast.show(selector.frames > 1 ? `Best of ${selector.frames} saved` : 'Saved', 1800);
+    } catch (e) { console.error(e); this.toast.show('Burst failed'); }
+    finally { this.capturing = false; this.controls.setBusy(false); }
   }
 
   runTimer(sec) {

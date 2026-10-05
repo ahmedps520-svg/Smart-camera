@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rollFromGravity } from '../js/motion/MotionSensor.js';
 import { transformAnalysis } from '../js/vision/ViewTransform.js';
-import { shadePixel, lookParams } from '../js/render/LookRenderer.js';
+import { shadePixel, lookParams, composeParams } from '../js/render/LookRenderer.js';
 import { CameraController } from '../js/camera/CameraController.js';
 import { PoseScorer } from '../js/analysis/PoseScorer.js';
 import { SubjectTracker } from '../js/analysis/SubjectTracker.js';
@@ -47,7 +47,7 @@ test('view transform maps detections and hides landmarks outside the view', () =
 
 test('looks are strong and distinct', () => {
   const skin = [0.8, 0.6, 0.5];
-  const out = (id, s = 1) => shadePixel(...skin, 0.5, 0.5, lookParams(id), s);
+  const out = (id, s = 1) => shadePixel(...skin, 0.5, 0.5, composeParams(id, s));
   const nat = out('natural');
   assert.deepEqual(nat.map((v) => +v.toFixed(6)), skin);
   const bw = out('bw'); assert.ok(Math.abs(bw[0] - bw[1]) < 1e-6 && Math.abs(bw[1] - bw[2]) < 1e-6, 'B&W is grey');
@@ -56,7 +56,7 @@ test('looks are strong and distinct', () => {
   assert.ok(cool[2] / cool[0] > (skin[2] / skin[0]) * 1.3, 'cool shifts noticeably toward blue');
   const vib = out('vibrant'); assert.ok(vib[0] - vib[2] > (skin[0] - skin[2]) * 1.5, 'vibrant boosts saturation');
   const half = out('warm', 0.5); assert.ok(half[0] > skin[0] && half[0] < warm[0], 'strength blends');
-  const corner = shadePixel(...skin, 0, 0, lookParams('cinematic'), 1), centre = out('cinematic');
+  const corner = shadePixel(...skin, 0, 0, lookParams('cinematic')), centre = out('cinematic');
   assert.ok(corner[1] < centre[1] * 0.75, 'cinematic vignette darkens corners');
 });
 

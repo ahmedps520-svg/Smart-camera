@@ -48,7 +48,7 @@ export class Overlay {
   draw(s) {
     const ctx = this.ctx; this.clear();
     const m = this.mapper();
-    if (this.options.grid) this.drawGrid(ctx);
+    if (this.options.grid && this.options.grid !== 'off') this.drawGrid(ctx, this.options.grid);
     if (this.options.horizon && s.motion?.available && !s.motion.flat) this.drawHorizon(ctx, s.motion);
     const tracked = s.tracked;
     const aiOn = s.mode !== 'photo';
@@ -110,6 +110,7 @@ export class Overlay {
     const alpha = this.ringAlpha * (r.coasting ? 0.55 : 1);
     const color = r.color || '#FFD60A';
     const radius = Math.min(box.w, box.h) / 2;
+    if (!r.hideRing) {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = color; ctx.lineWidth = r.perfect ? 4 : 3;
@@ -118,10 +119,11 @@ export class Overlay {
     if (ctx.roundRect) ctx.roundRect(box.x, box.y, box.w, box.h, radius); else ctx.rect(box.x, box.y, box.w, box.h);
     ctx.stroke();
     ctx.restore();
+    }
 
     // Direction chevron on the ring edge.
     const dir = { '←': [-1, 0], '→': [1, 0], '↑': [0, -1], '↓': [0, 1] }[r.label?.arrow];
-    if (dir && !r.perfect) {
+    if (dir && !r.perfect && !r.hideRing) {
       const cx = box.x + box.w / 2 + dir[0] * (box.w / 2 + 16), cy = box.y + box.h / 2 + dir[1] * (box.h / 2 + 16);
       const px = Math.min(this.w - 14, Math.max(14, cx)), py = Math.min(this.h - 14, Math.max(14, cy));
       const ang = Math.atan2(dir[1], dir[0]);
@@ -153,9 +155,18 @@ export class Overlay {
     ctx.restore();
   }
 
-  drawGrid(ctx) {
-    ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 0.8;
-    for (const f of [1 / 3, 2 / 3]) { ctx.beginPath(); ctx.moveTo(this.w * f, 0); ctx.lineTo(this.w * f, this.h); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, this.h * f); ctx.lineTo(this.w, this.h * f); ctx.stroke(); }
+  /** Composition grids: rule of thirds, golden ratio (phi grid) or a centre cross. */
+  drawGrid(ctx, type = 'thirds') {
+    ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.24)'; ctx.lineWidth = 0.8;
+    const line = (x0, y0, x1, y1) => { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); };
+    if (type === 'center') {
+      const cx = this.w / 2, cy = this.h / 2, l = Math.min(this.w, this.h) * 0.06;
+      line(cx - l, cy, cx + l, cy); line(cx, cy - l, cx, cy + l);
+      ctx.strokeRect(this.w * 0.25, this.h * 0.25, this.w * 0.5, this.h * 0.5);
+    } else {
+      const fr = type === 'golden' ? [0.382, 0.618] : [1 / 3, 2 / 3];
+      for (const f of fr) { line(this.w * f, 0, this.w * f, this.h); line(0, this.h * f, this.w, this.h * f); }
+    }
     ctx.restore();
   }
 

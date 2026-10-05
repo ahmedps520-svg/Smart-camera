@@ -10,6 +10,10 @@ export const MODELS = {
   // int8 models run on the CPU (XNNPACK) delegate: they are small, run rarely and the GPU delegate rejects int8 output tensors.
   objects: { path: 'models/efficientdet_lite0.tflite', maxResults: 6, scoreThreshold: 0.45, delegate: 'CPU' },
   scene: { path: 'models/efficientnet_lite0.tflite', maxResults: 5, scoreThreshold: 0.1, delegate: 'CPU' },
+  // Person segmentation for Portrait mode (background blur). Loaded on first use.
+  segmenter: { path: 'models/selfie_segmenter.tflite' },
+  // Face mesh + blendshapes for smile shutter and blink guard. Loaded on first use.
+  faceMesh: { path: 'models/face_landmarker.task', numFaces: 4, minDetection: 0.4 },
   runtime: {
     wasmLoaderPath: 'vendor/mediapipe/tasks-vision/wasm/vision_wasm_internal.js',
     wasmBinaryPath: 'vendor/mediapipe/tasks-vision/wasm/vision_wasm_internal.wasm',
@@ -20,9 +24,9 @@ export const MODELS = {
 
 /** Scheduling (frames between runs) per analysis stage, by performance tier. */
 export const SCHEDULE = {
-  high:     { pose: 1, face: 2, lighting: 2, objects: 20, scene: 45, maxFps: 30 },
-  balanced: { pose: 2, face: 3, lighting: 3, objects: 30, scene: 60, maxFps: 24 },
-  low:      { pose: 3, face: 5, lighting: 4, objects: 60, scene: 120, maxFps: 15 },
+  high:     { pose: 1, face: 2, lighting: 2, objects: 20, scene: 45, segment: 2, expressions: 3, maxFps: 30 },
+  balanced: { pose: 2, face: 3, lighting: 3, objects: 30, scene: 60, segment: 2, expressions: 4, maxFps: 24 },
+  low:      { pose: 3, face: 5, lighting: 4, objects: 60, scene: 120, segment: 3, expressions: 6, maxFps: 15 },
 };
 
 /** Performance governor: software thermal management (the web has no thermal API). */
@@ -91,6 +95,8 @@ export const AUTO_CAPTURE = {
   requirePoseChange: 0.2,// torso lengths the pose must change before shooting again…
   repeatAfterMs: 8000,   // …or this long holding the same pose
   groupSettleMs: 600,    // extra hold when more than one person is in frame
+  eyesOpenMin: 0.45,     // blink guard: lowest eyes-open score among faces to allow a shot
+  blinkWaitMs: 900,      // at the end of the countdown, wait up to this long for eyes to open
 };
 
 /**
@@ -166,7 +172,13 @@ export const SCENES = [
 export const DEFAULT_SETTINGS = {
   mode: 'smart',             // photo | smart | pose
   aiEnabled: true,
-  grid: false,
+  grid: 'off',               // off | thirds | golden | center
+  histogram: false,
+  zebra: false,              // highlight-clipping stripes
+  handTrigger: true,         // raise a hand → 3 s timer
+  smileTrigger: false,       // smile → capture
+  blinkGuard: true,          // never auto-capture closed eyes
+  portraitBlur: 0.6,         // 0 (f/16) … 1 (f/1.4)
   horizon: true,
   skeleton: false,
   scores: true,

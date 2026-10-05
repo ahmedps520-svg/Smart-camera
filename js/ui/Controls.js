@@ -28,7 +28,15 @@ export class Controls extends Emitter {
   bind() {
     const e = this.el, s = this.settings;
     e.modes.addEventListener('click', (ev) => { const b = ev.target.closest('.mode'); if (b) this.emit('mode', b.dataset.mode); });
-    e.btnShutter.addEventListener('click', () => this.emit('shutter'));
+    // Shutter: tap = photo, press and hold = burst (best shot is kept).
+    let holdTimer = 0, bursting = false, pressed = false;
+    e.btnShutter.addEventListener('pointerdown', (ev) => { ev.preventDefault(); pressed = true; bursting = false; holdTimer = setTimeout(() => { if (pressed) { bursting = true; this.emit('burstStart'); } }, 380); });
+    const release = () => { if (!pressed) return; pressed = false; clearTimeout(holdTimer); if (bursting) { bursting = false; this.emit('burstEnd'); } else this.emit('shutter'); };
+    e.btnShutter.addEventListener('pointerup', release);
+    e.btnShutter.addEventListener('pointerleave', () => { if (bursting) release(); else { pressed = false; clearTimeout(holdTimer); } });
+    e.btnShutter.addEventListener('pointercancel', () => { if (bursting) release(); pressed = false; clearTimeout(holdTimer); });
+    e.btnShutter.addEventListener('contextmenu', (ev) => ev.preventDefault());
+    e.btnShutter.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); this.emit('shutter'); } });
     e.btnFlip.addEventListener('click', () => this.emit('flip'));
     e.btnSelfie.addEventListener('click', () => this.emit('selfie'));
     e.btnFlash.addEventListener('click', () => { const order = ['off', 'auto', 'on']; const next = order[(order.indexOf(s.get('flash')) + 1) % order.length]; this.emit('flash', next); });
@@ -42,7 +50,10 @@ export class Controls extends Emitter {
     e.lens.addEventListener('change', () => this.emit('lens', e.lens.value));
 
     // Panel toggles → settings.
-    const map = { ctlAI: 'aiEnabled', ctlGrid: 'grid', ctlHorizon: 'horizon', ctlSkeleton: 'skeleton', ctlScores: 'scores', ctlSound: 'sound', ctlMirror: 'mirrorFront', ctlHaptics: 'haptics' };
+    const map = { ctlAI: 'aiEnabled', ctlHand: 'handTrigger', ctlSmile: 'smileTrigger', ctlBlink: 'blinkGuard', ctlHistogram: 'histogram', ctlZebra: 'zebra', ctlHorizon: 'horizon', ctlSkeleton: 'skeleton', ctlScores: 'scores', ctlSound: 'sound', ctlMirror: 'mirrorFront', ctlHaptics: 'haptics' };
+    const grid = $('ctlGrid'); grid.value = s.get('grid'); grid.addEventListener('change', () => this.emit('setting', { key: 'grid', value: grid.value }));
+    const ap = $('apertureSlider'); ap.value = s.get('portraitBlur'); this.setApertureLabel(s.get('portraitBlur'));
+    ap.addEventListener('input', () => { const v = parseFloat(ap.value); this.setApertureLabel(v); this.emit('setting', { key: 'portraitBlur', value: v }); });
     for (const [id, key] of Object.entries(map)) { const el = $(id); el.checked = !!s.get(key); el.addEventListener('change', () => this.emit('setting', { key, value: el.checked })); }
     const ex = $('ctlExposure'); ex.value = s.get('exposure'); $('ctlExposureV').textContent = Number(s.get('exposure')).toFixed(1);
     ex.addEventListener('input', () => { $('ctlExposureV').textContent = Number(ex.value).toFixed(1); this.emit('setting', { key: 'exposure', value: parseFloat(ex.value) }); });
@@ -67,7 +78,7 @@ export class Controls extends Emitter {
     e.viewport.addEventListener('pointerup', up); e.viewport.addEventListener('pointercancel', up);
     // Close the panel when tapping the preview.
     e.viewport.addEventListener('pointerdown', () => { if (e.panel.classList.contains('open')) this.togglePanel(false); });
-    document.addEventListener('keydown', (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { if (document.activeElement === document.body) { ev.preventDefault(); this.emit('shutter'); } } });
+    document.addEventListener('keydown', (ev) => { if ((ev.key === ' ' || ev.key === 'Enter') && document.activeElement === document.body && $('review').hidden) { ev.preventDefault(); this.emit('shutter'); } });
   }
 
   togglePanel(force) {
@@ -100,6 +111,11 @@ export class Controls extends Emitter {
   }
   setLenses(devices, currentId) { const sel = this.el.lens; sel.innerHTML = ''; for (const d of devices) { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || `Camera ${sel.length + 1}`; if (d.deviceId === currentId) o.selected = true; sel.appendChild(o); } sel.parentElement.hidden = devices.length < 2; }
   setFilter(id, recommendedId) { for (const b of this.el.filters.querySelectorAll('.filter-chip')) { b.classList.toggle('active', b.dataset.id === id); b.classList.toggle('recommended', b.dataset.id === recommendedId); } }
+  /** Blur 0…1 shown as an f-number from f/16 to f/1.4. */
+  static fNumber(v) { return 16 * Math.pow(1.4 / 16, v); }
+  setApertureLabel(v) { const f = Controls.fNumber(v); $('apertureF').textContent = `f/${f < 10 ? f.toFixed(1) : Math.round(f)}`; }
+  setAperture(visible) { $('aperture').hidden = !visible; }
+  setTrigger(text) { const c = $('triggerChip'); c.hidden = !text; if (text) c.textContent = text; }
   setSelfie(on) { this.el.btnSelfie.setAttribute('aria-pressed', String(on)); }
   setGuide(rec, sub = '', { small = false } = {}) {
     const p = this.el.guidePill;

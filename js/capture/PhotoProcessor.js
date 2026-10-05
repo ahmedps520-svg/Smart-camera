@@ -12,7 +12,7 @@ export class PhotoProcessor {
 
   async process({ blob, width, height, canvas }, context = {}) {
     const source = canvas || (await createImageBitmap(blob));
-    const thumbCanvas = renderStill(source, { lookId: context.look || 'natural', strength: context.strength ?? 1, maxSide: 360 });
+    const thumbCanvas = renderStill(source, { lookId: context.look || 'natural', strength: context.strength ?? 1, depth: context.depth || null, maxSide: 360 });
     const thumb = await new Promise((r) => thumbCanvas.toBlob(r, 'image/jpeg', 0.82));
     // Quality analysis on a 512 px sample (full-res statistics would not change the verdict).
     const aw = 512, ah = Math.max(1, Math.round((height / width) * 512));

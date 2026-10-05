@@ -86,7 +86,7 @@ export class AutoCaptureController extends Emitter {
     return { shift, pose, total: Math.max(shift, pose) };
   }
 
-  check(scores, group) {
+  check(scores, group, eyesOpen = null) {
     const T = this.config.thresholds; const b = [];
     if ((scores.overall ?? 0) < T.overall) b.push('overall');
     if ((scores.pose ?? 0) < T.pose) b.push('pose');
@@ -94,12 +94,13 @@ export class AutoCaptureController extends Emitter {
     if ((scores.stability ?? 0) < T.stability) b.push('stability');
     if (scores.lighting != null && scores.lighting < T.lighting) b.push('lighting');
     if (group && group.stable === false) b.push('group');
+    if (eyesOpen != null && eyesOpen < this.config.eyesOpenMin) b.push('eyes');
     this.blockers = b;
     return b.length === 0;
   }
 
   /** @param {{scores, subject, group, now:number}} s */
-  update({ scores, subject, group, now }) {
+  update({ scores, subject, group, now, eyesOpen = null }) {
     if (!this.enabled || this.state === 'IDLE' || this.state === 'CAPTURING') return this.state;
     if (this.state === 'COOLDOWN') {
       if (now < this.cooldownUntil) return this.state;
@@ -108,7 +109,7 @@ export class AutoCaptureController extends Emitter {
     if (!subject) { this.blockers = ['subject']; if (this.state !== 'MONITORING') this.cancel('Subject lost'); return this.state; }
 
     const snap = AutoCaptureController.snapshot(subject);
-    let ok = this.check(scores, group);
+    let ok = this.check(scores, group, eyesOpen);
     if (ok && this.captured && now - this.captured.at < this.config.repeatAfterMs) {
       const m = AutoCaptureController.movement(snap, this.captured.snap);
       if (m.pose < this.config.requirePoseChange && m.shift < this.config.requirePoseChange * 2) { ok = false; this.blockers = ['same pose']; }
@@ -133,10 +134,12 @@ export class AutoCaptureController extends Emitter {
     }
     if (this.state === 'COUNTDOWN') {
       if (moved) { this.cancel('Moved during countdown'); return this.state; }
-      if (!withinGrace) { this.cancel('Conditions changed'); return this.state; }
+      if (!withinGrace && !this.blockers.every((b) => b === 'eyes')) { this.cancel('Conditions changed'); return this.state; }
       this.progress = Math.min(1, (now - this.countdownStart) / this.config.countdownMs);
       this.emit('state', { state: 'COUNTDOWN', progress: this.progress });
       if (now - this.countdownStart >= this.config.countdownMs) {
+        // Blink guard: hold the shutter (briefly) until everyone's eyes are open.
+        if (eyesOpen != null && eyesOpen < this.config.eyesOpenMin && now - this.countdownStart < this.config.countdownMs + this.config.blinkWaitMs) return this.state;
         this.captured = { snap, at: now };
         this.transition('CAPTURING');
         this.emit('capture', { scores });

@@ -27,9 +27,9 @@ export class VisionEngine extends Emitter {
     this.governor = new PerformanceGovernor();
     this.running = false;
     this.frame = 0;
-    this.last = { people: [], faces: [], objects: [], sceneLabels: [], pixels: null };
+    this.last = { people: [], faces: [], objects: [], sceneLabels: [], pixels: null, mask: null, expressions: [] };
     this.lastT = 0;
-    this.enabled = { pose: true, face: true, objects: true, scene: true, lighting: true };
+    this.enabled = { pose: true, face: true, objects: true, scene: true, lighting: true, segment: false, expressions: false };
     this.failures = {};
     /** Per-stage overrides (run at least every N frames), set by the app when it needs a stage more often. */
     this.boost = {};
@@ -81,7 +81,7 @@ export class VisionEngine extends Emitter {
     this.lastT = now;
     this.frame++;
     const f = this.frame, w = v.videoWidth, h = v.videoHeight;
-    const ran = { pose: false, face: false, objects: false, scene: false, lighting: false };
+    const ran = { pose: false, face: false, objects: false, scene: false, lighting: false, segment: false, expressions: false };
     const due = (n) => f === 1 || f % n === 0;   // every stage runs on the first frame
     const t0 = performance.now();
     // Each stage is isolated: one failing model never blocks the others. A stage
@@ -101,6 +101,12 @@ export class VisionEngine extends Emitter {
     run('objects', () => { this.last.objects = this.backend.detectObjects(v, now, w, h); });
     run('scene', () => { this.last.sceneLabels = this.backend.classifyScene(v, now); });
     run('lighting', () => { this.last.pixels = this.sampler.sample(v, this.governor.analysisWidth, this.cropProvider()); });
+    // Portrait mask is computed on the visible crop, so it is already in view coordinates.
+    run('segment', () => {
+      if (!ran.lighting) this.last.pixels = this.sampler.sample(v, this.governor.analysisWidth, this.cropProvider());
+      this.last.mask = this.backend.segment(this.sampler.canvas, now);
+    });
+    run('expressions', () => { this.last.expressions = this.backend.faceExpressions(v, now); });
     const ms = performance.now() - t0;
     if (ran.pose) this.governor.recordInference(ms);
     this.emit('analysis', { t: now, width: w, height: h, frame: f, ran, ...this.last, perf: this.governor.stats, inferenceMs: ms });

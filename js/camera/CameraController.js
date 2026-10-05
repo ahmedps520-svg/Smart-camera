@@ -154,6 +154,18 @@ export class CameraController extends Emitter {
     try { await this.track.applyConstraints({ advanced: [adv] }); return true; } catch { return false; }
   }
 
+  /** Fast copy of the current video frame (visible crop, full stream resolution) — used for bursts. */
+  grabFrame({ viewW, viewH, mirrorOutput = false } = {}) {
+    const vw = this.video.videoWidth, vh = this.video.videoHeight;
+    const c = CameraController.cropFor(vw, vh, viewW || vw, viewH || vh, this.digitalZoom);
+    const cw = Math.round(c.w * vw), ch = Math.round(c.h * vh);
+    const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (mirrorOutput) { ctx.translate(cw, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(this.video, Math.round(c.x * vw), Math.round(c.y * vh), cw, ch, 0, 0, cw, ch);
+    return canvas;
+  }
+
   /**
    * Capture a full-resolution still of exactly what the viewfinder shows.
    * Prefers ImageCapture.takePhoto (real photo pipeline, Chrome/Android) and

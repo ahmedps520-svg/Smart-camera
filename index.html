@@ -82,11 +82,21 @@
     <!-- Horizon / level readout -->
     <div class="level-readout" id="levelReadout" hidden><span id="levelText">LEVEL</span></div>
 
+    <!-- Histogram -->
+    <canvas id="histogram" class="histogram" width="240" height="96" hidden aria-hidden="true"></canvas>
+
+    <!-- Hands-free trigger indicator -->
+    <div class="trigger-chip" id="triggerChip" hidden></div>
+
     <!-- Scene chip -->
     <div class="scene-chip" id="sceneChip" hidden></div>
 
     <!-- Bottom controls -->
     <footer class="bottombar">
+      <div class="aperture" id="aperture" hidden>
+        <span class="aperture-f" id="apertureF">f/2.8</span>
+        <input type="range" id="apertureSlider" min="0" max="1" step="0.01" value="0.6" aria-label="Background blur" />
+      </div>
       <div class="zoom-row" id="zoomRow">
         <div class="zoom-chips" id="zoomChips"></div>
         <div class="zoom-hint" id="zoomHint" hidden></div>
@@ -94,8 +104,9 @@
       <input id="zoomSlider" class="zoom-slider" type="range" min="1" max="10" step="0.01" value="1" aria-label="Zoom" hidden />
       <div class="modes" id="modes" role="tablist">
         <button class="mode" role="tab" data-mode="photo">PHOTO</button>
-        <button class="mode" role="tab" data-mode="smart">SMART PHOTO</button>
-        <button class="mode" role="tab" data-mode="pose">SMART POSE</button>
+        <button class="mode" role="tab" data-mode="smart">SMART</button>
+        <button class="mode" role="tab" data-mode="pose">POSE</button>
+        <button class="mode" role="tab" data-mode="portrait">PORTRAIT</button>
       </div>
       <div class="shutter-row">
         <button id="btnGallery" class="thumb" aria-label="Open photo library"><img id="thumbImg" alt="" hidden /><span class="thumb-count" id="thumbCount" hidden></span></button>
@@ -111,13 +122,21 @@
       <div class="panel-handle"></div>
       <div class="panel-grid">
         <label class="ctl"><span>AI assist</span><input type="checkbox" id="ctlAI" checked /></label>
-        <label class="ctl"><span>Grid</span><input type="checkbox" id="ctlGrid" /></label>
+        <label class="ctl"><span>Raise hand</span><input type="checkbox" id="ctlHand" checked /></label>
+        <label class="ctl"><span>Smile shutter</span><input type="checkbox" id="ctlSmile" /></label>
+        <label class="ctl"><span>Blink guard</span><input type="checkbox" id="ctlBlink" checked /></label>
         <label class="ctl"><span>Horizon</span><input type="checkbox" id="ctlHorizon" checked /></label>
+        <label class="ctl"><span>Histogram</span><input type="checkbox" id="ctlHistogram" /></label>
+        <label class="ctl"><span>Highlights</span><input type="checkbox" id="ctlZebra" /></label>
         <label class="ctl"><span>Skeleton</span><input type="checkbox" id="ctlSkeleton" /></label>
         <label class="ctl"><span>Scores</span><input type="checkbox" id="ctlScores" checked /></label>
         <label class="ctl"><span>Sound</span><input type="checkbox" id="ctlSound" checked /></label>
         <label class="ctl"><span>Mirror front</span><input type="checkbox" id="ctlMirror" checked /></label>
         <label class="ctl"><span>Haptics</span><input type="checkbox" id="ctlHaptics" checked /></label>
+      </div>
+      <div class="ctl-row">
+        <span>Grid</span>
+        <select id="ctlGrid" aria-label="Grid"><option value="off">Off</option><option value="thirds">Rule of thirds</option><option value="golden">Golden ratio</option><option value="center">Centre cross</option></select>
       </div>
       <div class="ctl-row">
         <span>Exposure</span>
@@ -170,12 +189,25 @@
       <header class="review-head">
         <button id="rvBack" class="link-btn">‹ Camera</button>
         <span id="rvCounter" class="review-counter"></span>
-        <button id="rvAll" class="link-btn">All photos</button>
+        <div class="review-head-right">
+          <button id="rvDelete" class="icon-btn small" aria-label="Delete photo" title="Delete"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button id="rvAll" class="link-btn">All</button>
+        </div>
       </header>
       <div class="review-img-wrap" id="rvStage"><img id="reviewImg" alt="Captured photo" draggable="false" /></div>
       <div class="review-meta" id="reviewMeta"></div>
-      <div class="review-filters" id="reviewFilters"></div>
-      <div class="review-strength"><span>Strength</span><input type="range" id="rvStrength" min="0" max="1.5" step="0.05" value="1" aria-label="Filter strength" /><b id="rvStrengthV">100%</b></div>
+      <div class="review-tabs" role="tablist">
+        <button class="review-tab" data-tab="looks" aria-selected="true">Looks</button>
+        <button class="review-tab" data-tab="edit" aria-selected="false">Edit</button>
+      </div>
+      <div class="review-pane" id="paneLooks">
+        <div class="review-filters" id="reviewFilters"></div>
+        <div class="review-strength"><span>Strength</span><input type="range" id="rvStrength" min="0" max="1.5" step="0.05" value="1" aria-label="Filter strength" /><b id="rvStrengthV">100%</b></div>
+      </div>
+      <div class="review-pane" id="paneEdit" hidden>
+        <div class="edit-top"><button id="rvAuto" class="chip-btn">✦ Auto</button><button id="rvResetEdit" class="chip-btn">Reset</button></div>
+        <div class="edit-grid" id="editSliders"></div>
+      </div>
       <div class="review-actions">
         <button id="rvRetake" class="action">Retake</button>
         <button id="rvFavorite" class="action" aria-pressed="false">♡</button>

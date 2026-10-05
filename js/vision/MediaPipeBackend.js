@@ -14,9 +14,9 @@ export class MediaPipeBackend {
     this.models = models;
     this.lib = null;
     this.fileset = null;
-    this.pose = null; this.face = null; this.objects = null; this.scene = null;
+    this.pose = null; this.face = null; this.objects = null; this.scene = null; this.segmenter = null; this.faceMesh = null;
     this.delegate = models.runtime.delegate;
-    this.lastTs = { pose: -1, face: -1, objects: -1, scene: -1 };
+    this.lastTs = { pose: -1, face: -1, objects: -1, scene: -1, segment: -1, faceMesh: -1 };
     this.ready = false;
   }
 
@@ -87,6 +87,52 @@ export class MediaPipeBackend {
     return this.scene;
   }
 
+  async ensureSegmenter() {
+    if (this.segmenter) return this.segmenter;
+    await this.init();
+    this.segmenter = await this.createWithFallback((o) => this.lib.ImageSegmenter.createFromOptions(this.fileset, o), {
+      baseOptions: { modelAssetPath: MediaPipeBackend.url(this.models.segmenter.path) }, runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false,
+    });
+    return this.segmenter;
+  }
+
+  async ensureFaceMesh() {
+    if (this.faceMesh) return this.faceMesh;
+    await this.init();
+    const m = this.models.faceMesh;
+    this.faceMesh = await this.createWithFallback((o) => this.lib.FaceLandmarker.createFromOptions(this.fileset, o), {
+      baseOptions: { modelAssetPath: MediaPipeBackend.url(m.path) }, runningMode: 'VIDEO', numFaces: m.numFaces,
+      minFaceDetectionConfidence: m.minDetection, outputFaceBlendshapes: true, outputFacialTransformationMatrixes: false,
+    });
+    return this.faceMesh;
+  }
+
+  /** Person mask for `source` (any image/canvas/video). → { data: Uint8Array (0-255), width, height } */
+  segment(source, t) {
+    if (!this.segmenter) return null;
+    const r = this.segmenter.segmentForVideo(source, this.ts('segment', t));
+    const masks = r?.confidenceMasks || [];
+    const m = masks[masks.length - 1];
+    if (!m) { r?.close?.(); return null; }
+    const f = m.getAsFloat32Array();
+    const data = new Uint8Array(f.length);
+    for (let i = 0; i < f.length; i++) data[i] = f[i] * 255;
+    const out = { data, width: m.width, height: m.height };
+    for (const x of masks) x.close?.();
+    r?.close?.();
+    return out;
+  }
+
+  /** → [{ landmarks: [{x,y}], blendshapes: {name: score} }] normalised to the source frame. */
+  faceExpressions(source, t) {
+    if (!this.faceMesh) return [];
+    const r = this.faceMesh.detectForVideo(source, this.ts('faceMesh', t));
+    return (r.faceLandmarks || []).map((lm, i) => ({
+      landmarks: lm,
+      blendshapes: Object.fromEntries((r.faceBlendshapes?.[i]?.categories || []).map((c) => [c.categoryName, c.score])),
+    }));
+  }
+
   ts(key, t) { const v = Math.max(Math.floor(t), this.lastTs[key] + 1); this.lastTs[key] = v; return v; }
 
   /** → [{ landmarks: [{x,y,z,visibility}], world: [...] }] normalised to the source frame. */
@@ -125,6 +171,6 @@ export class MediaPipeBackend {
   }
 
   close() {
-    for (const k of ['pose', 'face', 'objects', 'scene']) { try { this[k]?.close(); } catch { /* noop */ } this[k] = null; }
+    for (const k of ['pose', 'face', 'objects', 'scene', 'segmenter', 'faceMesh']) { try { this[k]?.close(); } catch { /* noop */ } this[k] = null; }
   }
 }

@@ -15,7 +15,8 @@ export class Settings extends Emitter {
     } catch { /* ignore corrupt storage */ }
     const params = new URLSearchParams(location.search);
     const mode = params.get('mode');
-    if (mode === 'pose' || mode === 'photo' || mode === 'smart') this.data.mode = mode;
+    if (['pose', 'photo', 'smart', 'portrait'].includes(mode)) this.data.mode = mode;
+    if (this.data.grid === true) this.data.grid = 'thirds'; else if (this.data.grid === false) this.data.grid = 'off';
   }
   get(k) { return this.data[k]; }
   set(k, v) {

@@ -4,7 +4,7 @@
  * No network requests are made for analysis at any time; the only fetches are
  * for the app's own static files.
  */
-const VERSION = 'smart-camera-v1.2.0';
+const VERSION = 'smart-camera-v1.3.0';
 const SHELL_CACHE = `${VERSION}-shell`;
 // Models only change when this name changes, so app updates never re-download ~25 MB.
 const MODEL_CACHE = 'smart-camera-models-v1';
@@ -30,6 +30,11 @@ const SHELL = [
   './js/vision/PerformanceGovernor.js',
   './js/vision/ViewTransform.js',
   './js/render/LookRenderer.js',
+  './js/render/AutoEnhance.js',
+  './js/analysis/Expressions.js',
+  './js/capture/Triggers.js',
+  './js/capture/BurstSelector.js',
+  './js/ui/Histogram.js',
   './js/analysis/SubjectTracker.js',
   './js/analysis/PoseScorer.js',
   './js/analysis/CompositionEngine.js',
@@ -68,6 +73,8 @@ const MODELS = [
   './models/blaze_face_short_range.tflite',
   './models/efficientdet_lite0.tflite',
   './models/efficientnet_lite0.tflite',
+  './models/selfie_segmenter.tflite',
+  './models/face_landmarker.task',
 ];
 
 self.addEventListener('install', (event) => {
@@ -77,7 +84,7 @@ self.addEventListener('install', (event) => {
     const models = await caches.open(MODEL_CACHE);
     // Add models one by one so a single failure does not abort the whole install.
     await Promise.all(MODELS.map(async (url) => {
-      try { await models.add(url); } catch (e) { /* retried lazily on first use */ }
+      try { if (!(await models.match(url))) await models.add(url); } catch (e) { /* retried lazily on first use */ }
     }));
     await self.skipWaiting();
   })());
