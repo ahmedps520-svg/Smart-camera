@@ -1,6 +1,5 @@
 import { Emitter } from '../util/events.js';
 import { FILTERS, ZOOM } from '../config/defaults.js';
-import { cssFilter } from '../capture/Filters.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,7 +18,7 @@ export class Controls extends Emitter {
       scores: $('scores'), levelReadout: $('levelReadout'), levelText: $('levelText'), sceneChip: $('sceneChip'),
       zoomChips: $('zoomChips'), zoomHint: $('zoomHint'), zoomSlider: $('zoomSlider'), modes: $('modes'),
       btnShutter: $('btnShutter'), btnFlip: $('btnFlip'), btnFlash: $('btnFlash'), flashBadge: $('flashBadge'), btnTimer: $('btnTimer'), timerBadge: $('timerBadge'),
-      btnPanel: $('btnPanel'), panel: $('panel'), btnAI: $('btnAI'), aiLabel: $('aiLabel'), btnGallery: $('btnGallery'), thumbImg: $('thumbImg'), thumbCount: $('thumbCount'),
+      btnPanel: $('btnPanel'), btnSelfie: $('btnSelfie'), panel: $('panel'), btnAI: $('btnAI'), aiLabel: $('aiLabel'), btnGallery: $('btnGallery'), thumbImg: $('thumbImg'), thumbCount: $('thumbCount'),
       flash: $('flash'), focusRing: $('focusRing'), perf: $('perfReadout'), filters: $('filters'), lens: $('ctlLens'), toast: $('toast'),
     };
     this.lastGuideCode = null;
@@ -31,6 +30,7 @@ export class Controls extends Emitter {
     e.modes.addEventListener('click', (ev) => { const b = ev.target.closest('.mode'); if (b) this.emit('mode', b.dataset.mode); });
     e.btnShutter.addEventListener('click', () => this.emit('shutter'));
     e.btnFlip.addEventListener('click', () => this.emit('flip'));
+    e.btnSelfie.addEventListener('click', () => this.emit('selfie'));
     e.btnFlash.addEventListener('click', () => { const order = ['off', 'auto', 'on']; const next = order[(order.indexOf(s.get('flash')) + 1) % order.length]; this.emit('flash', next); });
     e.btnTimer.addEventListener('click', () => { const order = [0, 3, 10]; const next = order[(order.indexOf(s.get('timer')) + 1) % order.length]; this.emit('timer', next); });
     e.btnPanel.addEventListener('click', () => this.togglePanel());
@@ -51,6 +51,9 @@ export class Controls extends Emitter {
     const hold = $('ctlHold'); hold.value = (s.get('holdMs') / 1000).toFixed(2); $('ctlHoldV').textContent = `${(s.get('holdMs') / 1000).toFixed(1)}s`;
     hold.addEventListener('input', () => { $('ctlHoldV').textContent = `${Number(hold.value).toFixed(1)}s`; this.emit('setting', { key: 'holdMs', value: Math.round(parseFloat(hold.value) * 1000) }); });
     const rate = $('ctlRate'); rate.value = s.get('rate'); rate.addEventListener('change', () => this.emit('setting', { key: 'rate', value: rate.value }));
+    const str = $('ctlStrength'); str.value = s.get('filterStrength'); $('ctlStrengthV').textContent = `${Math.round(s.get('filterStrength') * 100)}%`;
+    str.addEventListener('input', () => { $('ctlStrengthV').textContent = `${Math.round(str.value * 100)}%`; this.emit('setting', { key: 'filterStrength', value: parseFloat(str.value) }); });
+    const asp = $('ctlAspect'); asp.value = s.get('aspect'); asp.addEventListener('change', () => this.emit('setting', { key: 'aspect', value: asp.value }));
     const dir = $('ctlDirection'); dir.value = s.get('direction'); dir.addEventListener('change', () => this.emit('setting', { key: 'direction', value: dir.value }));
 
     // Filters.
@@ -96,7 +99,8 @@ export class Controls extends Emitter {
     if (!this.el.zoomHint.hidden) this.el.zoomHint.textContent = `${recommended}× recommended`;
   }
   setLenses(devices, currentId) { const sel = this.el.lens; sel.innerHTML = ''; for (const d of devices) { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || `Camera ${sel.length + 1}`; if (d.deviceId === currentId) o.selected = true; sel.appendChild(o); } sel.parentElement.hidden = devices.length < 2; }
-  setFilter(id, recommendedId) { for (const b of this.el.filters.querySelectorAll('.filter-chip')) { b.classList.toggle('active', b.dataset.id === id); b.classList.toggle('recommended', b.dataset.id === recommendedId); } this.el.video.style.filter = cssFilter(id); }
+  setFilter(id, recommendedId) { for (const b of this.el.filters.querySelectorAll('.filter-chip')) { b.classList.toggle('active', b.dataset.id === id); b.classList.toggle('recommended', b.dataset.id === recommendedId); } }
+  setSelfie(on) { this.el.btnSelfie.setAttribute('aria-pressed', String(on)); }
   setGuide(rec, sub = '') {
     const p = this.el.guidePill;
     if (!rec) { p.dataset.tone = 'hidden'; this.lastGuideCode = null; this.el.guideSub.textContent = sub; return; }
@@ -104,12 +108,13 @@ export class Controls extends Emitter {
     p.dataset.tone = rec.tone || 'neutral'; this.el.guideText.textContent = rec.text || rec.recommendation; this.el.guideArrow.textContent = rec.arrow || '';
     this.el.guideSub.textContent = sub;
   }
-  setScores(sc, visible) {
+  /** @param blockers score keys currently stopping auto capture (shown in red) */
+  setScores(sc, visible, blockers = []) {
     this.el.scores.hidden = !visible; if (!visible || !sc) return;
-    const set = (bar, val, key) => { const b = document.getElementById(bar), v = document.getElementById(`${bar}V`); b.style.width = `${val}%`; b.className = val >= 80 ? 'good' : val < 50 ? 'bad' : ''; v.textContent = sc[key] == null ? '–' : Math.round(val); };
+    const set = (bar, val, key) => { const b = document.getElementById(bar), v = document.getElementById(`${bar}V`); b.style.width = `${val}%`; b.className = blockers.includes(key) ? 'bad' : val >= 75 ? 'good' : ''; v.textContent = sc[key] == null ? '–' : Math.round(val); };
     set('scPose', sc.pose ?? 0, 'pose'); set('scFrame', sc.framing ?? 0, 'framing'); set('scLight', sc.lighting ?? 0, 'lighting'); set('scStab', sc.stability ?? 0, 'stability'); set('scAll', sc.overall ?? 0, 'overall');
   }
-  setLevel(motion, visible) { const el = this.el.levelReadout; el.hidden = !visible || !motion?.available; if (el.hidden) return; el.classList.toggle('level', motion.level); this.el.levelText.textContent = motion.level ? 'LEVEL' : `${Math.abs(motion.rollDeg).toFixed(0)}°`; }
+  setLevel(motion, visible) { const el = this.el.levelReadout; el.hidden = !visible || !motion?.available || motion.flat; if (el.hidden) return; el.classList.toggle('level', motion.level); this.el.levelText.textContent = motion.level ? 'LEVEL' : `${Math.abs(motion.rollDeg).toFixed(0)}°`; }
   setScene(scene, visible) { this.el.sceneChip.hidden = !visible || !scene; if (scene) this.el.sceneChip.textContent = scene; }
   setCountdown(progress, text) { const c = this.el.countdown; if (progress == null) { c.classList.remove('show'); return; } c.classList.add('show'); this.el.countdownText.textContent = text; this.el.countdownArc.style.strokeDashoffset = String(283 * (1 - progress)); }
   setArmed(on) { this.el.btnShutter.dataset.armed = String(on); }

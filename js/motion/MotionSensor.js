@@ -3,24 +3,47 @@ import { EMA, Ring } from '../util/smoothing.js';
 import { clamp01, deg } from '../util/math.js';
 
 /**
- * Core Motion analogue for the web: reads DeviceMotion (gravity + rotation rate)
- * to produce camera roll, pitch, a level flag and a stability score. Falls back
- * to DeviceOrientation, and to a neutral reading when no sensors are available.
+ * Camera roll from a gravity reading, in the current screen frame.
  *
- * Emits 'motion' { rollDeg, pitchDeg, stability, level, available }
+ * Browsers disagree on the sign of accelerationIncludingGravity: iOS Safari
+ * reports the opposite sign to Android/Chrome, which naively gives ~180° on an
+ * upright iPhone. The angle is therefore folded into −90…90°, which makes the
+ * result identical on both platforms (a camera is never used upside down).
+ *
+ * Returns { rollDeg, flat }: flat is true when the phone points mostly up or
+ * down, where roll is meaningless.
+ */
+export function rollFromGravity(x, y, z, screenAngle = 0) {
+  const a = ((screenAngle % 360) + 360) % 360;
+  if (a === 90) [x, y] = [-y, x];
+  else if (a === 270) [x, y] = [y, -x];
+  else if (a === 180) [x, y] = [-x, -y];
+  const planar = Math.hypot(x, y);
+  const g = Math.hypot(x, y, z) || 9.81;
+  let roll = deg(Math.atan2(x, y));
+  if (roll > 90) roll -= 180;
+  else if (roll < -90) roll += 180;
+  return { rollDeg: roll, flat: planar / g < 0.45 };
+}
+
+/**
+ * Core Motion analogue for the web: reads DeviceMotion (gravity + rotation rate)
+ * to produce camera roll, a level flag and a stability score. Falls back to
+ * DeviceOrientation, and to a neutral reading when no sensors are available.
+ *
+ * Emits 'motion' { rollDeg, stability, level, flat, available }
  */
 export class MotionSensor extends Emitter {
   constructor({ levelToleranceDeg = 1.5, hysteresisDeg = 0.8 } = {}) {
     super();
-    this.roll = new EMA(0.25);
-    this.pitch = new EMA(0.25);
+    this.roll = new EMA(0.2);
     this.rot = new Ring(20);
     this.acc = new Ring(20);
     this.available = false;
     this.level = false;
     this.levelTol = levelToleranceDeg;
     this.hyst = hysteresisDeg;
-    this.state = { rollDeg: 0, pitchDeg: 0, stability: 1, level: true, available: false };
+    this.state = { rollDeg: 0, stability: 1, level: true, flat: false, available: false };
     this._onMotion = this.onMotion.bind(this);
     this._onOrientation = this.onOrientation.bind(this);
   }
@@ -52,15 +75,11 @@ export class MotionSensor extends Emitter {
     const g = e.accelerationIncludingGravity;
     if (!g || g.x == null) return;
     this.available = true;
-    let { x, y, z } = g;
-    // Rotate gravity into the current screen frame so landscape works too.
-    const ang = this.screenAngle();
-    if (ang === 90) { [x, y] = [-y, x]; } else if (ang === 270 || ang === -90) { [x, y] = [y, -x]; } else if (ang === 180) { [x, y] = [-x, -y]; }
-    // roll: 0 when upright; sign chosen so a clockwise device tilt gives a negative roll.
-    const rollDeg = deg(Math.atan2(x, y));
-    const pitchDeg = deg(Math.atan2(z, Math.hypot(x, y)));
+    const { rollDeg, flat } = rollFromGravity(g.x, g.y, g.z ?? 0, this.screenAngle());
+    // Avoid EMA wrap-around when the folded angle jumps across ±90.
+    if (this.roll.value != null && Math.abs(rollDeg - this.roll.value) > 60) this.roll.reset(rollDeg);
     this.roll.push(rollDeg);
-    this.pitch.push(pitchDeg);
+    this.flat = flat;
     const rr = e.rotationRate;
     if (rr && rr.alpha != null) this.rot.push(Math.hypot(rr.alpha, rr.beta, rr.gamma));
     const a = e.acceleration;
@@ -70,23 +89,23 @@ export class MotionSensor extends Emitter {
 
   onOrientation(e) {
     if (this.available || e.gamma == null) return; // devicemotion is preferred
-    const ang = this.screenAngle();
-    let roll = ang === 0 ? e.gamma : ang === 90 ? e.beta - 90 : ang === 270 ? 90 - e.beta : -e.gamma;
+    const ang = ((this.screenAngle() % 360) + 360) % 360;
+    let roll = ang === 0 ? -e.gamma : ang === 90 ? 90 - e.beta : ang === 270 ? e.beta - 90 : e.gamma;
+    if (roll > 90) roll -= 180; else if (roll < -90) roll += 180;
     this.roll.push(roll);
-    this.pitch.push((e.beta ?? 90) - 90);
+    this.flat = Math.abs(e.beta ?? 90) < 25;
     this.publish(true);
   }
 
   publish(fromOrientation = false) {
-    const rollDeg = this.roll.value ?? 0;
-    const pitchDeg = this.pitch.value ?? 0;
+    const rollDeg = this.flat ? 0 : (this.roll.value ?? 0);
     const tol = this.level ? this.levelTol + this.hyst : this.levelTol;
-    this.level = Math.abs(rollDeg) <= tol;
-    // Stability: 1 when rotation rate < 3 deg/s and no linear acceleration, 0 at > 40 deg/s.
+    this.level = this.flat || Math.abs(rollDeg) <= tol;
+    // Stability: 1 when rotation rate < 4 deg/s and no linear acceleration, 0 at > 45 deg/s.
     const rot = this.rot.mean();
     const acc = this.acc.mean();
-    const stability = fromOrientation ? 0.9 : clamp01(1 - Math.max((rot - 3) / 37, (acc - 0.15) / 1.2));
-    this.state = { rollDeg, pitchDeg, stability, level: this.level, available: true };
+    const stability = fromOrientation ? 0.9 : clamp01(1 - Math.max((rot - 4) / 41, (acc - 0.2) / 1.3));
+    this.state = { rollDeg, stability, level: this.level, flat: !!this.flat, available: true };
     this.emit('motion', this.state);
   }
 

@@ -4,9 +4,11 @@
  * No network requests are made for analysis at any time; the only fetches are
  * for the app's own static files.
  */
-const VERSION = 'smart-camera-v1.0.0';
+const VERSION = 'smart-camera-v1.1.0';
 const SHELL_CACHE = `${VERSION}-shell`;
-const MODEL_CACHE = `${VERSION}-models`;
+// Models only change when this name changes, so app updates never re-download ~25 MB.
+const MODEL_CACHE = 'smart-camera-models-v1';
+const KEEP = [SHELL_CACHE, MODEL_CACHE];
 
 const SHELL = [
   './',
@@ -26,6 +28,8 @@ const SHELL = [
   './js/vision/MediaPipeBackend.js',
   './js/vision/FrameSampler.js',
   './js/vision/PerformanceGovernor.js',
+  './js/vision/ViewTransform.js',
+  './js/render/LookRenderer.js',
   './js/analysis/SubjectTracker.js',
   './js/analysis/PoseScorer.js',
   './js/analysis/CompositionEngine.js',
@@ -38,7 +42,6 @@ const SHELL = [
   './js/reasoning/RecommendationValidator.js',
   './js/reasoning/Debouncer.js',
   './js/capture/AutoCaptureController.js',
-  './js/capture/Filters.js',
   './js/capture/PhotoProcessor.js',
   './js/library/PhotoLibrary.js',
   './js/ui/Overlay.js',
@@ -70,7 +73,7 @@ const MODELS = [
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const shell = await caches.open(SHELL_CACHE);
-    await shell.addAll(SHELL);
+    await shell.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })));
     const models = await caches.open(MODEL_CACHE);
     // Add models one by one so a single failure does not abort the whole install.
     await Promise.all(MODELS.map(async (url) => {
@@ -83,7 +86,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => !k.startsWith(VERSION)).map((k) => caches.delete(k)));
+    await Promise.all(keys.filter((k) => !KEEP.includes(k)).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -129,11 +132,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App shell: stale-while-revalidate.
+  // App shell: network first (so updates show up immediately), cache when offline.
   event.respondWith((async () => {
     const cache = await caches.open(SHELL_CACHE);
-    const hit = await cache.match(req, { ignoreSearch: true });
-    const refresh = fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => null);
-    return hit || (await refresh) || new Response('Offline', { status: 503 });
+    try {
+      const res = await fetch(req, { cache: 'no-cache' });
+      if (res.ok) cache.put(req, res.clone());
+      return res;
+    } catch {
+      return (await cache.match(req, { ignoreSearch: true })) || new Response('Offline', { status: 503 });
+    }
   })());
 });

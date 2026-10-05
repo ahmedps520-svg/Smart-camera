@@ -32,6 +32,8 @@ export class VisionEngine extends Emitter {
     this.enabled = { pose: true, face: true, objects: true, scene: true, lighting: true };
     this.failures = {};
     this._raf = 0;
+    /** Returns the visible crop of the video frame; set by the app. */
+    this.cropProvider = () => ({ x: 0, y: 0, w: 1, h: 1 });
     this.status = 'idle';
   }
 
@@ -96,7 +98,7 @@ export class VisionEngine extends Emitter {
     run('face', () => { this.last.faces = this.backend.detectFaces(v, now, w, h); });
     run('objects', () => { this.last.objects = this.backend.detectObjects(v, now, w, h); });
     run('scene', () => { this.last.sceneLabels = this.backend.classifyScene(v, now); });
-    run('lighting', () => { this.last.pixels = this.sampler.sample(v, this.governor.analysisWidth); });
+    run('lighting', () => { this.last.pixels = this.sampler.sample(v, this.governor.analysisWidth, this.cropProvider()); });
     const ms = performance.now() - t0;
     if (ran.pose) this.governor.recordInference(ms);
     this.emit('analysis', { t: now, width: w, height: h, frame: f, ran, ...this.last, perf: this.governor.stats, inferenceMs: ms });

@@ -6,8 +6,7 @@ const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 
 /**
  * Draws all on-preview guidance on a canvas: dynamic composition box, subject
  * box, skeleton (optional), grid, horizon/level guide and group markers.
- * Coordinates arrive normalised to the video frame; this class maps them to the
- * object-fit: cover preview (including digital zoom and mirroring).
+ * Coordinates arrive normalised to the visible view (see vision/ViewTransform.js).
  */
 export class Overlay {
   constructor(canvas, video) {
@@ -27,18 +26,17 @@ export class Overlay {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
-  /** Mapping from normalised frame coords to CSS pixels (object-fit: contain + digital zoom). */
+  /**
+   * Mapping from normalised view coordinates (0..1 across the visible
+   * viewfinder, as produced by ViewTransform) to CSS pixels. The preview is
+   * mirrored for the front camera, so x is flipped to match.
+   */
   mapper() {
-    const vw = this.video.videoWidth || 4, vh = this.video.videoHeight || 3;
-    const z = this.options.zoom || 1;
-    const scale = Math.min(this.w / vw, this.h / vh) * z;
-    const dw = vw * scale, dh = vh * scale;
-    const ox = (this.w - dw) / 2, oy = (this.h - dh) / 2;
-    const mirror = this.options.mirror;
+    const w = this.w, h = this.h, mirror = this.options.mirror;
     return {
-      x: (nx) => ox + (mirror ? 1 - nx : nx) * dw,
-      y: (ny) => oy + ny * dh,
-      box: (b) => ({ x: ox + (mirror ? 1 - b.x - b.w : b.x) * dw, y: oy + b.y * dh, w: b.w * dw, h: b.h * dh }),
+      x: (nx) => (mirror ? 1 - nx : nx) * w,
+      y: (ny) => ny * h,
+      box: (b) => ({ x: (mirror ? 1 - b.x - b.w : b.x) * w, y: b.y * h, w: b.w * w, h: b.h * h }),
     };
   }
 
@@ -51,7 +49,7 @@ export class Overlay {
     const ctx = this.ctx; this.clear();
     const m = this.mapper();
     if (this.options.grid) this.drawGrid(ctx);
-    if (this.options.horizon && s.motion?.available) this.drawHorizon(ctx, s.motion);
+    if (this.options.horizon && s.motion?.available && !s.motion.flat) this.drawHorizon(ctx, s.motion);
     const tracked = s.tracked;
     const aiOn = s.mode !== 'photo';
     if (!aiOn) { this.targetFilter.reset(); this.subjectFilter.reset(); return; }

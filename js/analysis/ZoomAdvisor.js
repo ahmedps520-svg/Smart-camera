@@ -13,9 +13,10 @@ export class ZoomAdvisor {
   /**
    * @returns {{zoom:number|null, optical:boolean, reason:string, confidence:number, action:'ZOOM'|'CLOSER'|'BACK'|'NONE'}}
    */
-  recommend({ composition, scene, presets, currentZoom, tracked, now = 0 }) {
+  recommend({ composition, scene, presets, currentZoom, tracked, now = 0, allowZoom = true }) {
     const C = this.config;
     if (!presets?.length) return { zoom: null, optical: false, reason: 'No lens data', confidence: 0, action: 'NONE' };
+    if (!allowZoom) return this.stable(this.distanceOnly(composition), now);
     const factors = presets.map((p) => p.factor);
     const minP = Math.min(...factors), maxP = Math.max(...factors);
     let desired = currentZoom, reason = '', confidence = 0.5, action = 'NONE';
@@ -43,11 +44,23 @@ export class ZoomAdvisor {
       else if (Math.abs(best.factor - currentZoom) / currentZoom > C.hysteresis) action = 'ZOOM';
     } else if (reason && Math.abs(best.factor - currentZoom) / currentZoom > C.hysteresis) action = 'ZOOM';
 
-    // Temporal hysteresis: a new suggestion must persist ~600 ms before it is surfaced.
-    const key = `${action}:${best.factor}`;
-    if (this.current?.key !== key) { this.current = { key, since: now }; }
-    const stable = now - this.current.since >= 600;
-    const out = { zoom: action === 'ZOOM' ? best.factor : null, optical: !!best.optical, reason, confidence, action: stable ? action : 'NONE', suggested: best.factor };
+    return this.stable({ zoom: action === 'ZOOM' ? best.factor : null, optical: !!best.optical, reason, confidence, action, suggested: best.factor }, now);
+  }
+
+  /** Front camera / selfies: zooming crops the face, so advise distance instead. */
+  distanceOnly(composition) {
+    const C = this.config;
+    const r = composition?.hasSubject ? composition.sizeRatio : 1;
+    if (r < 1 - C.hysteresis * 1.8) return { zoom: null, optical: false, reason: 'Bring the phone closer', confidence: 0.6, action: 'CLOSER', suggested: null };
+    if (r > 1.6) return { zoom: null, optical: false, reason: 'Hold the phone further away', confidence: 0.6, action: 'BACK', suggested: null };
+    return { zoom: null, optical: false, reason: '', confidence: 0, action: 'NONE', suggested: null };
+  }
+
+  /** Temporal hysteresis: a new suggestion must persist ~600 ms before it is surfaced. */
+  stable(out, now) {
+    const key = `${out.action}:${out.suggested}`;
+    if (this.current?.key !== key) this.current = { key, since: now };
+    if (now - this.current.since < 600) return { ...out, action: 'NONE' };
     return out;
   }
 }

@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>Smart Camera</title>
   <meta name="description" content="On-device AI photography assistant. Pose, composition, zoom and lighting guidance with automatic capture. No cloud, no uploads." />
   <meta name="theme-color" content="#0b0b0f" />
   <meta name="color-scheme" content="dark" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
   <meta name="apple-mobile-web-app-title" content="Smart Camera" />
   <meta name="format-detection" content="telephone=no" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -26,24 +26,31 @@
     <!-- Camera preview -->
     <div id="viewport" class="viewport">
       <video id="video" class="video" autoplay playsinline muted></video>
+      <canvas id="preview" class="preview" aria-hidden="true"></canvas>
       <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
       <div id="flash" class="flash" aria-hidden="true"></div>
       <div id="focusRing" class="focus-ring" aria-hidden="true"></div>
     </div>
 
     <!-- Top bar -->
-    <header class="topbar">
-      <button id="btnFlash" class="icon-btn" aria-label="Flash" data-state="off" title="Flash">
-        <svg viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
-        <span class="icon-badge" id="flashBadge"></span>
-      </button>
-      <button id="btnAI" class="pill-btn ai-pill" aria-pressed="true" title="On-device AI">
-        <span class="dot"></span><span id="aiLabel">ON-DEVICE</span>
-      </button>
-      <div class="topbar-right">
+    <header class="topbar" id="topbar">
+      <div class="tb-left">
+        <button id="btnFlash" class="icon-btn" aria-label="Flash" data-state="off" title="Flash">
+          <svg viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+          <span class="icon-badge" id="flashBadge"></span>
+        </button>
         <button id="btnTimer" class="icon-btn" aria-label="Timer" title="Timer">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v4l3 2M9 2h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           <span class="icon-badge" id="timerBadge"></span>
+        </button>
+      </div>
+      <button id="btnAI" class="pill-btn ai-pill" aria-pressed="true" title="On-device AI">
+        <span class="dot"></span><span id="aiLabel">ON-DEVICE</span>
+      </button>
+      <div class="tb-right">
+        <button id="btnSelfie" class="selfie-btn" aria-pressed="false" aria-label="Selfie camera" title="Selfie">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21c1.2-4 4.3-6 8-6s6.8 2 8 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>SELFIE</span>
         </button>
         <button id="btnPanel" class="icon-btn" aria-label="More controls" aria-expanded="false" title="Controls">
           <svg viewBox="0 0 24 24"><path d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
@@ -122,6 +129,15 @@
         <div class="filters" id="filters"></div>
       </div>
       <div class="ctl-row">
+        <span>Filter strength</span>
+        <input type="range" id="ctlStrength" min="0" max="1.5" step="0.05" value="1" aria-label="Filter strength" />
+        <b id="ctlStrengthV">100%</b>
+      </div>
+      <div class="ctl-row">
+        <span>Photo shape</span>
+        <select id="ctlAspect" aria-label="Photo shape"><option value="full">Full screen</option><option value="4:3">4:3 (more detail)</option><option value="16:9">16:9</option></select>
+      </div>
+      <div class="ctl-row">
         <span>Lens</span>
         <select id="ctlLens" aria-label="Lens"></select>
       </div>
@@ -154,6 +170,7 @@
       <div class="review-img-wrap"><img id="reviewImg" alt="Captured photo" /></div>
       <div class="review-meta" id="reviewMeta"></div>
       <div class="review-filters" id="reviewFilters"></div>
+      <div class="review-strength"><span>Strength</span><input type="range" id="rvStrength" min="0" max="1.5" step="0.05" value="1" aria-label="Filter strength" /><b id="rvStrengthV">100%</b></div>
       <div class="review-actions">
         <button id="rvRetake" class="action">Retake</button>
         <button id="rvFavorite" class="action" aria-pressed="false">♡</button>

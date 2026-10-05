@@ -11,17 +11,17 @@ Point your phone at a scene; local vision models understand it, the composition 
 
 | Area | Implementation |
 | --- | --- |
-| Live camera | Full-screen preview, rear/front switch, physical lens picker, hardware zoom where the browser exposes it plus digital zoom, pinch / slider / preset chips, torch, exposure compensation, tap to focus, timer, flash modes |
+| Live camera | Full-screen GPU (WebGL) preview, one-tap **Selfie** button that works in every mode, photo shape (full screen / 4:3 / 16:9), rear/front switch, physical lens picker, hardware zoom where the browser exposes it plus digital zoom, pinch / slider / preset chips, torch, exposure compensation, tap to focus, timer, flash modes |
 | Layer 1: real-time vision | MediaPipe Pose Landmarker (up to 4 people), BlazeFace face detector, EfficientDet-Lite0 object detector, EfficientNet-Lite0 scene classifier, pixel statistics for lighting. Adaptive schedule with frame skipping; expensive models run only every few seconds |
 | Layer 2: photography reasoning | Rules engine that consumes structured scene data (never frames) and returns a validated, structured recommendation. Debounced with hysteresis so guidance never flickers. Pluggable: a local LLM adapter can replace it and goes through the same strict validator |
 | Smart Photo mode | Live coaching: Move left/right, Tilt up/down, Level camera, Zoom to 2×, More headroom, Subject too close to edge, Turn toward the light, Perfect framing |
-| Smart Pose mode | Continuously scored Pose / Framing / Lighting / Stability / Overall. Conditions must hold for a configurable window, then a "Perfect" countdown, then auto capture. Movement cancels. The same pose is not re-shot until it changes |
+| Smart Pose mode | Continuously scored Pose / Framing / Lighting / Stability / Overall. When the overall score passes the threshold and no score is below its floor, a short hold, a "Perfect" countdown, then auto capture. Brief dips are tolerated; real movement (measured in torso lengths) cancels. Scores that are blocking the capture turn red and are named under the guide. The same pose is re-shot only after it changes or 8 s pass. Works with the front camera for hands-free selfies |
 | Composition engine | Rule of thirds with lead room, centre, symmetry (mirror score), horizon placement (estimated horizon row), group framing, negative space for vehicles, headroom, edge margins, subject size, clutter |
 | Dynamic composition box | Smoothed (One Euro filter) "SUBJECT HERE" box that tracks the subject and turns green with PERFECT when aligned |
 | Zoom intelligence | Recommends the lens/zoom that puts the subject at the composition's target size, preferring optical presets, with temporal hysteresis |
 | Lighting analysis | Exposure, highlight/shadow clipping, contrast, backlighting (subject vs background), colour cast, noise proxy, advice text |
-| Filter recommendation | Natural, Warm, Cool, Cinematic, Vibrant, B&W, Soft, High Contrast, Golden Hour, Night. Live preview via CSS filters, export via Canvas. Originals are never modified |
-| Motion | DeviceMotion-based roll/pitch, horizon guide with LEVEL readout, motion stability score |
+| Filters | Natural, Warm, Cool, Cinematic, Vibrant, B&W, Soft, High Contrast, Golden Hour, Night, with a 0–150 % strength slider. One colour pipeline (temperature, tint, contrast, S-curve, saturation, split toning, fade, shadow lift, vignette, grain) runs as a WebGL shader for the live preview and full-resolution export, with an identical CPU path. What you see is what you save. Originals are stored untouched; the look is rendered on review and export. A look is recommended from the scene and light |
+| Motion | DeviceMotion-based roll, horizon guide with LEVEL readout, motion stability score. Works with both the iOS and Android gravity sign conventions; hidden when the phone points straight up or down |
 | Scene understanding | portrait, group, landscape, architecture, food, pet, vehicle, sunset, night, product, street, beach, indoor, outdoor — sticky classification that influences composition and filters |
 | Multi-person | Tracks everyone, checks who is cut off, spacing, balance, face visibility; no auto capture until the group is still |
 | Library | Full-quality originals in IndexedDB, thumbnails, review with retake / favourite / share / download, filter export as a separate copy. Never touches the user's own photos |
@@ -40,7 +40,7 @@ npx http-server -p 8080 -c-1 .
 # open http://localhost:8080 (localhost counts as a secure context, so the camera works)
 ```
 
-On iPhone: open the Pages URL in Safari, tap Share → **Add to Home Screen**. The app then launches full screen, keeps working offline, and asks for camera and motion permission on the first tap.
+On iPhone: open the Pages URL in Safari, tap Share → **Add to Home Screen**. The app then launches full screen, keeps working offline, and asks for camera and motion permission on the first tap. New versions load automatically the next time the app is opened (the service worker fetches app files network-first and reloads once when an update takes over).
 
 ## Modes
 
@@ -49,6 +49,10 @@ On iPhone: open the Pages URL in Safari, tap Share → **Add to Home Screen**. T
 * **SMART POSE** – live guidance plus automatic capture when the pose is strong and stable.
 
 Guidance directions describe the **camera** by default: "Move right" means pan or step right, which slides the subject left in the frame. If you prefer "move right" to mean "the subject should go right", change *Directions* in the control panel.
+
+**Selfie** (top bar) switches to the front camera in any mode. Guidance is phrased for holding the phone at arm's length ("Raise the phone", "Bring the phone closer"), selfies are framed centred with the eyes on the upper third, and Smart Pose will take the selfie for you.
+
+All analysis runs on exactly what the viewfinder shows: detections are transformed into view coordinates (`js/vision/ViewTransform.js`), and the capture is cropped to the same area, so the composition box, the guidance and the saved photo always agree. *Photo shape* in the control panel trades full-screen framing for the sensor's native 4:3 (more pixels).
 
 ## Architecture
 
@@ -59,9 +63,11 @@ js/
 ├── camera/   CameraController  getUserMedia, zoom (hardware + digital), torch, exposure, focus, capture
 │             LensModel         which presets the device really supports
 ├── motion/   MotionSensor      roll / pitch / level / stability from DeviceMotion
+├── render/   LookRenderer      GPU/CPU colour pipeline: preview, review, thumbnails, export
 ├── vision/   MediaPipeBackend  pose, face, objects, scene — swap for any backend with the same 4 methods
 │             VisionEngine      adaptive per-stage schedule, isolation of failing stages
-│             FrameSampler      small ImageData for pixel statistics
+│             FrameSampler      small ImageData of the visible area for pixel statistics
+│             ViewTransform     raw frame → view coordinates
 │             PerformanceGovernor  software thermal / performance tiers
 ├── analysis/ SubjectTracker    people + faces → tracked subjects, velocity, group box
 │             PoseScorer        configurable pose quality score
@@ -75,7 +81,7 @@ js/
 │              RecommendationValidator  strict schema; nothing unvalidated reaches the camera
 │              Debouncer        message debouncing + Schmitt-trigger hysteresis
 ├── capture/  AutoCaptureController  MONITORING → HOLDING → COUNTDOWN → CAPTURE → COOLDOWN
-│             Filters / PhotoProcessor  non-destructive looks, post-capture full-res analysis
+│             PhotoProcessor    post-capture analysis and thumbnail
 ├── library/  PhotoLibrary      IndexedDB store + share/download
 ├── settings/ Settings          persisted user settings
 └── ui/       Overlay, Controls, ReviewView, LibraryView, Haptics, Sounds, Toast
@@ -110,7 +116,7 @@ video frame ─▶ VisionEngine (pose · face · objects · scene · pixels)
 ## Tests
 
 ```bash
-npm test          # node --test tests/*.test.js — 34 unit tests over the pure logic modules
+npm test          # node --test tests/*.test.js — 45 unit tests over the pure logic modules
 ```
 
 Browser verification during development used headless Chromium with a fake camera fed by real test images (person, portrait, food, animals): models load from the vendored files, a person is detected and tracked, guidance and the composition box appear, the scene classifier maps labels (cheeseburger → food, cats/dogs → pet, seashore → beach), the shutter saves a full-resolution JPEG to the library with post-capture analysis, and Smart Pose auto-captures after the hold window and countdown.

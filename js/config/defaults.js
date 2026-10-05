@@ -66,8 +66,8 @@ export const COMPOSITION = {
   },
   tolerances: { position: 0.05, size: 0.1, headroom: 0.03 },
   horizon: { preferredRows: [1 / 3, 2 / 3], tolerance: 0.06 },
-  levelToleranceDeg: 1.5,
-  hysteresisDeg: 0.8,
+  levelToleranceDeg: 2,
+  hysteresisDeg: 1,
 };
 
 /** Overall score blend for Smart Pose. */
@@ -75,15 +75,22 @@ export const OVERALL = {
   weights: { pose: 0.35, framing: 0.3, lighting: 0.15, stability: 0.2 },
 };
 
-/** Automatic capture gate. */
+/**
+ * Automatic capture gate (Smart Pose).
+ * `overall` is the main threshold; the others are floors that stop a capture
+ * when one aspect is clearly bad. Movement is measured in torso lengths so it
+ * behaves the same for a selfie and a full-body shot.
+ */
 export const AUTO_CAPTURE = {
-  thresholds: { overall: 82, pose: 75, framing: 72, stability: 78, lighting: 40 },
-  holdMs: 1000,          // conditions must hold this long before countdown
-  countdownMs: 900,      // "Perfect" countdown length
-  cooldownMs: 3500,      // after a capture before another auto capture may arm
-  cancelMovement: 0.09,  // normalised landmark displacement that cancels the countdown
-  requirePoseChange: 0.12, // subject must change pose this much before re-capturing
-  groupSettleMs: 1400,   // extra hold when more than one person is in frame
+  thresholds: { overall: 76, pose: 62, framing: 50, stability: 60, lighting: 25 },
+  holdMs: 800,           // conditions must hold this long before the countdown
+  countdownMs: 800,      // "Perfect" countdown length
+  graceMs: 400,          // brief dips below threshold shorter than this are ignored
+  cooldownMs: 2500,      // after a capture before another auto capture may arm
+  cancelMovement: 0.45,  // torso lengths of movement that cancels the hold/countdown
+  requirePoseChange: 0.2,// torso lengths the pose must change before shooting again…
+  repeatAfterMs: 8000,   // …or this long holding the same pose
+  groupSettleMs: 600,    // extra hold when more than one person is in frame
 };
 
 /** Guidance debouncing / hysteresis. */
@@ -110,17 +117,32 @@ export const LIGHTING = {
   noiseThreshold: 0.045,
 };
 
+/**
+ * Looks. Each is a set of parameters for the colour pipeline in
+ * render/LookRenderer.js (GPU shader for preview and export, with an identical
+ * CPU path). `css` is only a fallback for browsers without WebGL.
+ *
+ * Parameters (defaults in LOOK_DEFAULTS): brightness, temperature (−1 cool … 1 warm),
+ * tint (− green … + magenta), contrast, curve (S-curve amount), saturation,
+ * fade (lifted blacks), lift (shadow boost), shadows / highlights (RGB split-tone
+ * offsets), vignette, grain.
+ */
+export const LOOK_DEFAULTS = {
+  brightness: 1, temperature: 0, tint: 0, contrast: 1, curve: 0, saturation: 1,
+  fade: 0, lift: 0, shadows: [0, 0, 0], highlights: [0, 0, 0], vignette: 0, grain: 0,
+};
+
 export const FILTERS = [
-  { id: 'natural', name: 'Natural', css: 'none', adj: {} },
-  { id: 'warm', name: 'Warm', css: 'sepia(0.18) saturate(1.15) brightness(1.03)', adj: { temperature: 18, saturation: 1.12, brightness: 1.03 } },
-  { id: 'cool', name: 'Cool', css: 'saturate(1.05) hue-rotate(-8deg) brightness(1.02)', adj: { temperature: -18, saturation: 1.05, brightness: 1.02 } },
-  { id: 'cinematic', name: 'Cinematic', css: 'contrast(1.15) saturate(0.85) sepia(0.12)', adj: { contrast: 1.15, saturation: 0.85, temperature: 8, vignette: 0.35 } },
-  { id: 'vibrant', name: 'Vibrant', css: 'saturate(1.45) contrast(1.08)', adj: { saturation: 1.45, contrast: 1.08 } },
-  { id: 'bw', name: 'B&W', css: 'grayscale(1) contrast(1.12)', adj: { saturation: 0, contrast: 1.12 } },
-  { id: 'soft', name: 'Soft', css: 'contrast(0.9) brightness(1.06) saturate(0.95)', adj: { contrast: 0.9, brightness: 1.06, saturation: 0.95 } },
-  { id: 'contrast', name: 'High Contrast', css: 'contrast(1.35) saturate(1.1)', adj: { contrast: 1.35, saturation: 1.1 } },
-  { id: 'golden', name: 'Golden Hour', css: 'sepia(0.3) saturate(1.3) brightness(1.04) contrast(1.05)', adj: { temperature: 30, saturation: 1.3, brightness: 1.04, contrast: 1.05, vignette: 0.2 } },
-  { id: 'night', name: 'Night', css: 'brightness(1.15) contrast(1.1) saturate(0.9) hue-rotate(-6deg)', adj: { brightness: 1.15, contrast: 1.1, saturation: 0.9, temperature: -10, shadowLift: 0.12 } },
+  { id: 'natural', name: 'Natural', params: {}, css: 'none' },
+  { id: 'warm', name: 'Warm', params: { temperature: 0.4, tint: 0.04, saturation: 1.2, contrast: 1.06, brightness: 1.03 }, css: 'sepia(0.35) saturate(1.4) brightness(1.04)' },
+  { id: 'cool', name: 'Cool', params: { temperature: -0.45, tint: -0.02, saturation: 1.05, contrast: 1.08, highlights: [-0.02, 0.01, 0.05] }, css: 'saturate(1.1) hue-rotate(-12deg) brightness(1.03) contrast(1.08)' },
+  { id: 'cinematic', name: 'Cinematic', params: { curve: 0.5, saturation: 0.75, temperature: 0.05, shadows: [-0.05, 0.05, 0.1], highlights: [0.1, 0.04, -0.06], fade: 0.05, vignette: 0.6 }, css: 'contrast(1.3) saturate(0.75) sepia(0.2)' },
+  { id: 'vibrant', name: 'Vibrant', params: { saturation: 1.8, contrast: 1.12, curve: 0.2, brightness: 1.03 }, css: 'saturate(1.9) contrast(1.12)' },
+  { id: 'bw', name: 'B&W', params: { saturation: 0, contrast: 1.22, curve: 0.4, grain: 0.05, vignette: 0.3 }, css: 'grayscale(1) contrast(1.3)' },
+  { id: 'soft', name: 'Soft', params: { contrast: 0.8, fade: 0.12, saturation: 0.85, brightness: 1.07, temperature: 0.1, highlights: [0.03, 0.02, 0.03] }, css: 'contrast(0.82) brightness(1.1) saturate(0.85)' },
+  { id: 'contrast', name: 'High Contrast', params: { contrast: 1.45, curve: 0.6, saturation: 1.2, vignette: 0.25 }, css: 'contrast(1.6) saturate(1.2)' },
+  { id: 'golden', name: 'Golden Hour', params: { temperature: 0.6, tint: 0.05, saturation: 1.35, curve: 0.25, brightness: 1.05, highlights: [0.1, 0.05, -0.06], shadows: [0.04, 0, -0.04], vignette: 0.35 }, css: 'sepia(0.55) saturate(1.6) brightness(1.06) contrast(1.08)' },
+  { id: 'night', name: 'Night', params: { brightness: 1.3, lift: 0.25, temperature: -0.22, saturation: 0.8, contrast: 1.1, curve: 0.15, grain: 0.03 }, css: 'brightness(1.4) contrast(1.1) saturate(0.8)' },
 ];
 
 export const SCENES = [
@@ -140,6 +162,8 @@ export const DEFAULT_SETTINGS = {
   mirrorFront: true,
   flash: 'off',              // off | on | auto
   timer: 0,                  // 0 | 3 | 10
+  filterStrength: 1,         // 0 … 1.5
+  aspect: 'full',            // full | 4:3 | 16:9
   exposure: 0,
   filter: 'natural',
   rate: 'auto',

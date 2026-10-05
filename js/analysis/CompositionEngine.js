@@ -71,12 +71,12 @@ export class CompositionEngine {
     return n ? clamp01((e / n) / 40) : 0;
   }
 
-  evaluate({ tracked, scene, motion, pixels, objects = [], aspect = 3 / 4 }) {
+  evaluate({ tracked, scene, motion, pixels, objects = [], selfie = false }) {
     const C = this.config;
     const type = CompositionEngine.compositionFor(scene, tracked);
     const issues = [];
     const scores = {};
-    const rollDeg = motion?.rollDeg ?? 0;
+    const rollDeg = motion?.flat ? 0 : (motion?.rollDeg ?? 0);
     const levelWeightHigh = scene === 'landscape' || scene === 'architecture' || scene === 'beach' || scene === 'sunset' || type === 'HORIZON' || type === 'SYMMETRY';
     scores.level = toleranceScore(rollDeg, C.levelToleranceDeg, levelWeightHigh ? 4 : 8);
     if (Math.abs(rollDeg) > C.levelToleranceDeg * (levelWeightHigh ? 1.5 : 3)) issues.push({ code: 'LEVEL', severity: levelWeightHigh ? 2 : 1, text: 'Level camera' });
@@ -119,15 +119,17 @@ export class CompositionEngine {
 
     if (type === 'RULE_OF_THIRDS') {
       // Lead room: a subject looking toward image-left sits on the right third, and vice versa.
+      // Selfies are centred horizontally: that is how people frame themselves.
       const facing = primary?.facing ?? 0;
       let thirdX;
-      if (Math.abs(facing) > 0.25) thirdX = facing < 0 ? C.thirds[1] : C.thirds[0];
+      if (selfie) thirdX = 0.5;
+      else if (Math.abs(facing) > 0.25) thirdX = facing < 0 ? C.thirds[1] : C.thirds[0];
       else {
         thirdX = this.lastThirdX ?? (cx < 0.5 ? C.thirds[0] : C.thirds[1]);
         // Switch thirds only when the subject has clearly crossed the centre line.
         if (this.lastThirdX != null && Math.abs(cx - 0.5) > 0.12) thirdX = cx < 0.5 ? C.thirds[0] : C.thirds[1];
       }
-      this.lastThirdX = thirdX;
+      if (!selfie) this.lastThirdX = thirdX;
       idealX = thirdX;
       // Vertical: for close/half shots put the eyes near the upper third; for full-body centre the body with headroom.
       if (primary && (shot === 'closeUp' || shot === 'half')) {

@@ -106,10 +106,29 @@ export class CameraController extends Emitter {
     if (factor < 1 && !lens.hardware) digital = 1; // can't go wider without an ultra-wide track
     this.zoom = factor;
     this.digitalZoom = Math.max(1, digital);
-    this.video.style.transform = `${this.mirror ? 'scaleX(-1) ' : ''}scale(${this.digitalZoom})`;
+    this.applyVideoTransform();
     if (!silent) this.emit('zoom', { zoom: this.zoom, digital: this.digitalZoom > 1.001 });
     return this.zoom;
   }
+
+  /** CSS transform for the raw <video> (only visible when the WebGL preview is unavailable). */
+  applyVideoTransform() { this.video.style.transform = `${this.mirror ? 'scaleX(-1) ' : ''}scale(${this.digitalZoom})`; }
+
+  /**
+   * Normalised source rectangle shown in a view of size viewW×viewH:
+   * object-fit: cover, then the digital zoom as a centred crop.
+   */
+  static cropFor(srcW, srcH, viewW, viewH, digitalZoom = 1) {
+    if (!srcW || !srcH || !viewW || !viewH) return { x: 0, y: 0, w: 1, h: 1 };
+    const va = viewW / viewH, sa = srcW / srcH;
+    let w = 1, h = 1;
+    if (sa > va) w = va / sa; else h = sa / va;
+    w /= digitalZoom; h /= digitalZoom;
+    return { x: (1 - w) / 2, y: (1 - h) / 2, w, h };
+  }
+
+  /** Crop of the live video frame that is visible in a view of the given size. */
+  viewCrop(viewW, viewH) { return CameraController.cropFor(this.video.videoWidth, this.video.videoHeight, viewW, viewH, this.digitalZoom); }
 
   get supportsTorch() { return !!this.capabilities.torch; }
   async setTorch(on) {
@@ -136,25 +155,26 @@ export class CameraController extends Emitter {
   }
 
   /**
-   * Capture a full-resolution still. Prefers ImageCapture.takePhoto (true photo
-   * pipeline where available) and falls back to grabbing the current video frame at
-   * the stream's native resolution. Digital zoom is applied as a centre crop so the
-   * saved image matches what the user framed. Returns {blob, width, height}.
+   * Capture a full-resolution still of exactly what the viewfinder shows.
+   * Prefers ImageCapture.takePhoto (real photo pipeline, Chrome/Android) and
+   * falls back to the current video frame at the stream's native resolution
+   * (Safari). The view crop and digital zoom are applied, and the image is
+   * mirrored when the preview is. Returns {blob, width, height, canvas}.
    */
-  async capture({ mirrorOutput = false, quality = 0.95 } = {}) {
+  async capture({ viewW, viewH, mirrorOutput = false, quality = 0.95 } = {}) {
     let source = null;
     if (this.imageCapture) {
       try {
-        const blob = await this.imageCapture.takePhoto({ imageWidth: this.capabilities.imageWidth?.max, imageHeight: this.capabilities.imageHeight?.max });
+        const blob = await this.imageCapture.takePhoto();
         source = await createImageBitmap(blob);
       } catch { source = null; }
     }
-    const canvas = document.createElement('canvas');
     const srcW = source ? source.width : this.video.videoWidth;
     const srcH = source ? source.height : this.video.videoHeight;
-    const dz = this.digitalZoom;
-    const cw = Math.round(srcW / dz), ch = Math.round(srcH / dz);
-    const sx = Math.round((srcW - cw) / 2), sy = Math.round((srcH - ch) / 2);
+    const c = CameraController.cropFor(srcW, srcH, viewW || srcW, viewH || srcH, this.digitalZoom);
+    const cw = Math.round(c.w * srcW), ch = Math.round(c.h * srcH);
+    const sx = Math.round(c.x * srcW), sy = Math.round(c.y * srcH);
+    const canvas = document.createElement('canvas');
     canvas.width = cw; canvas.height = ch;
     const ctx = canvas.getContext('2d', { alpha: false });
     if (mirrorOutput) { ctx.translate(cw, 0); ctx.scale(-1, 1); }

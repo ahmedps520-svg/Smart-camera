@@ -27,10 +27,16 @@ export class PoseScorer {
       return { score: Math.round(s * 100), components: c, issues: ['Body not detected'] };
     }
 
-    // Visibility of core joints.
-    const core = [LM.nose, LM.lEye, LM.rEye, LM.lShoulder, LM.rShoulder, LM.lHip, LM.rHip];
-    const extra = [LM.lElbow, LM.rElbow, LM.lWrist, LM.rWrist];
-    c.visibility = clamp01(mean(core.map((i) => l[i].visibility ?? 1)) * 0.75 + mean(extra.map((i) => l[i].visibility ?? 1)) * 0.25);
+    // Visibility of the joints this kind of shot is expected to show. A selfie or
+    // head-and-shoulders shot is not penalised for hips, elbows or the arm holding the phone.
+    const shot = subject.shotType;
+    const wide = shot === 'full' || shot === 'threeQuarter';
+    const hipsVisible = vis(l[LM.lHip]) || vis(l[LM.rHip]);
+    const v = (ids) => mean(ids.map((i) => l[i].visibility ?? 1));
+    const face = v([LM.nose, LM.lEye, LM.rEye]);
+    if (shot === 'closeUp') c.visibility = clamp01(face * 0.8 + v([LM.lShoulder, LM.rShoulder]) * 0.2);
+    else if (shot === 'half') c.visibility = clamp01(face * 0.5 + v([LM.lShoulder, LM.rShoulder]) * 0.3 + v([LM.lHip, LM.rHip]) * 0.2);
+    else c.visibility = clamp01(v([LM.nose, LM.lEye, LM.rEye, LM.lShoulder, LM.rShoulder, LM.lHip, LM.rHip]) * 0.75 + v([LM.lElbow, LM.rElbow, LM.lWrist, LM.rWrist]) * 0.25);
     if (c.visibility < 0.6) issues.push('Body partly hidden');
 
     // Head tilt (eye line) and head turn (nose offset between ears).
@@ -52,10 +58,11 @@ export class PoseScorer {
     if (c.faceVisible < 0.5) issues.push('Face not visible');
 
     // Shoulders: level and open toward the camera.
+    const shouldersVisible = vis(l[LM.lShoulder]) && vis(l[LM.rShoulder]);
     const shTilt = Math.abs(deg(Math.atan2(l[LM.rShoulder].y - l[LM.lShoulder].y, l[LM.rShoulder].x - l[LM.lShoulder].x)));
-    const shLevel = toleranceScore(shTilt > 90 ? 180 - shTilt : shTilt, T.maxShoulderTiltDeg, 3);
+    const shLevel = shouldersVisible ? toleranceScore(shTilt > 90 ? 180 - shTilt : shTilt, T.maxShoulderTiltDeg, 3) : 1;
     const hipW = dist(l[LM.lHip], l[LM.rHip]);
-    const open = hipW > 1e-3 ? clamp01(subject.shoulderW / (hipW * 1.1)) : 0.8;
+    const open = hipsVisible && hipW > 1e-3 ? clamp01(subject.shoulderW / (hipW * 1.1)) : 0.85;
     c.shoulders = clamp01(shLevel * 0.6 + open * 0.4);
 
     // Arms: hands should not cover the face; wrists should be clearly in or clearly out of frame.
@@ -63,7 +70,9 @@ export class PoseScorer {
     for (const i of [LM.lWrist, LM.rWrist]) {
       const w = l[i]; const v = w.visibility ?? 1;
       if (vis(w) && inHead(w)) arms -= 0.6;
-      if (v > 0.2 && v < 0.5) arms -= 0.15;              // ambiguous / cut off at the frame edge
+      if (!wide) continue;                                  // close shots: arms are often out of frame
+      const wv = w.visibility ?? 1;
+      if (wv > 0.2 && wv < 0.5) arms -= 0.15;               // ambiguous / cut off at the frame edge
       if (vis(w) && (w.x < 0.01 || w.x > 0.99 || w.y > 0.99)) arms -= 0.2;
     }
     c.arms = clamp01(arms);
@@ -81,10 +90,14 @@ export class PoseScorer {
     }
 
     // Symmetry: compare left/right torso lengths and elbow heights.
-    const lt = dist(l[LM.lShoulder], l[LM.lHip]), rt = dist(l[LM.rShoulder], l[LM.rHip]);
-    const torsoSym = 1 - Math.abs(lt - rt) / Math.max(1e-3, (lt + rt) / 2);
-    const elbowSym = 1 - Math.abs(l[LM.lElbow].y - l[LM.rElbow].y) / Math.max(1e-3, subject.box.h);
-    c.symmetry = clamp01(torsoSym * 0.6 + elbowSym * 0.4);
+    let symW = W.symmetry;
+    if (hipsVisible && shouldersVisible) {
+      const lt = dist(l[LM.lShoulder], l[LM.lHip]), rt = dist(l[LM.rShoulder], l[LM.rHip]);
+      const torsoSym = 1 - Math.abs(lt - rt) / Math.max(1e-3, (lt + rt) / 2);
+      const elbows = vis(l[LM.lElbow]) && vis(l[LM.rElbow]);
+      const elbowSym = elbows ? 1 - Math.abs(l[LM.lElbow].y - l[LM.rElbow].y) / Math.max(1e-3, subject.box.h) : 1;
+      c.symmetry = clamp01(torsoSym * 0.6 + elbowSym * 0.4);
+    } else { c.symmetry = 1; symW = 0; }
 
     // Stability from landmark velocity.
     c.stability = clamp01(1 - (subject.velocity - T.stillVelocity) / (T.movingVelocity - T.stillVelocity));
@@ -92,7 +105,7 @@ export class PoseScorer {
 
     const parts = [
       ['visibility', W.visibility], ['headAngle', W.headAngle], ['faceVisible', W.faceVisible], ['shoulders', W.shoulders],
-      ['arms', W.arms], ['legs', legW], ['symmetry', W.symmetry], ['stability', W.stability],
+      ['arms', W.arms], ['legs', legW], ['symmetry', symW], ['stability', W.stability],
     ].filter(([k, w]) => w > 0 && c[k] != null);
     const total = parts.reduce((s, [, w]) => s + w, 0);
     const score = parts.reduce((s, [k, w]) => s + c[k] * w, 0) / total;
