@@ -82,18 +82,21 @@ export class RuleBasedReasoner {
     const spread = find('GROUP_SPREAD');
     if (spread) return out('GROUP_SPREAD', spread.text, { reason: spread.text, confidence: 0.6 });
 
-    // 6. Lighting.
-    if (lighting?.code === 'BACKLIT') return out('BACKLIT', 'Subject is backlit', { reason: 'Background much brighter than subject', confidence: 0.7 });
-    if (lighting?.code === 'SUBJECT_DARK') return out('TURN_TO_LIGHT', 'Turn toward the light', { reason: 'Face is underexposed', confidence: 0.6 });
-    if (lighting?.code === 'TOO_DARK') return out('TOO_DARK', lighting.isNight ? 'Hold still — very dark' : 'Too dark', { reason: 'Low light', confidence: 0.7 });
-    if (lighting?.code === 'TOO_BRIGHT') return out('TOO_BRIGHT', 'Too bright', { reason: 'Highlights clipping', confidence: 0.6 });
+    // 6–7. Lighting and steadiness coaching (Smart Pose only; Smart Photo keeps to framing).
+    if (mode !== 'smart') {
+      // 6. Lighting.
+      if (lighting?.code === 'BACKLIT') return out('BACKLIT', 'Subject is backlit', { reason: 'Background much brighter than subject', confidence: 0.7 });
+      if (lighting?.code === 'SUBJECT_DARK') return out('TURN_TO_LIGHT', 'Turn toward the light', { reason: 'Face is underexposed', confidence: 0.6 });
+      if (lighting?.code === 'TOO_DARK') return out('TOO_DARK', lighting.isNight ? 'Hold still — very dark' : 'Too dark', { reason: 'Low light', confidence: 0.7 });
+      if (lighting?.code === 'TOO_BRIGHT') return out('TOO_BRIGHT', 'Too bright', { reason: 'Highlights clipping', confidence: 0.6 });
 
-    // 7. Pose-specific coaching.
-    if (mode === 'pose' && pose) {
-      if (pose.components.faceVisible < 0.5 || pose.issues.includes('Face turned away')) return out('FACE_CAMERA', 'Face the camera', { reason: 'Face not clearly visible', confidence: 0.7 });
-      if (pose.components.stability < 0.4) return out('HOLD_STILL', 'Hold still', { reason: 'Subject is moving', confidence: 0.8, tone: 'neutral' });
+      // 7. Pose-specific coaching.
+      if (mode === 'pose' && pose) {
+        if (pose.components.faceVisible < 0.5 || pose.issues.includes('Face turned away')) return out('FACE_CAMERA', 'Face the camera', { reason: 'Face not clearly visible', confidence: 0.7 });
+        if (pose.components.stability < 0.4) return out('HOLD_STILL', 'Hold still', { reason: 'Subject is moving', confidence: 0.8, tone: 'neutral' });
+      }
+      if ((motion?.stability ?? 1) < 0.35) return out('HOLD_STILL', 'Hold still', { reason: 'Camera is moving', confidence: 0.7, tone: 'neutral' });
     }
-    if ((motion?.stability ?? 1) < 0.35) return out('HOLD_STILL', 'Hold still', { reason: 'Camera is moving', confidence: 0.7, tone: 'neutral' });
 
     // 8. All good.
     const groupOk = tracked.count > 1;
@@ -110,24 +113,25 @@ export class RuleBasedReasoner {
  * implementation (e.g. a local model adapter) without touching the UI.
  */
 export class PhotographyReasoner {
-  constructor(reasoner = new RuleBasedReasoner()) {
+  constructor(reasoner = new RuleBasedReasoner(), { enter = GUIDANCE.enterRatio, exit = GUIDANCE.exitRatio, minHoldMs = GUIDANCE.minHoldMs, confirmMs = 320 } = {}) {
     this.reasoner = reasoner;
-    this.debouncer = new Debouncer({ minHoldMs: GUIDANCE.minHoldMs });
-    this.hyst = new Hysteresis({ enter: GUIDANCE.enterRatio, exit: GUIDANCE.exitRatio });
+    this.debouncer = new Debouncer({ minHoldMs, confirmMs });
+    this.hyst = new Hysteresis({ enter, exit });
     this.lastRaw = null;
   }
 
   setReasoner(r) { this.reasoner = r; this.debouncer.reset(); }
 
   /** @returns {{stable:Object|null, raw:Object}} */
-  update(state, now) {
+  update(state, now, { freeze = false } = {}) {
     let candidate;
     try { candidate = this.reasoner.reason({ ...state, _hyst: this.hyst }); } catch (e) { console.error('[reasoner]', e); candidate = null; }
     const allowed = state.zoom?.presets?.map((p) => p.factor) || [];
     const { value } = validateRecommendation(candidate, allowed);
     value.code = value.recommendation;
     this.lastRaw = value;
-    const stable = this.debouncer.push(value.recommendation === 'NONE' ? null : value, now);
+    // While frozen (phone moving) keep showing the current instruction.
+    const stable = freeze ? this.debouncer.current : this.debouncer.push(value.recommendation === 'NONE' ? null : value, now);
     return { stable, raw: value };
   }
 

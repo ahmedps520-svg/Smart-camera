@@ -17,7 +17,9 @@ const vis = (p, t = VIS) => !!p && (p.visibility ?? 1) >= t;
  * head position, estimated head top, shot type, landmark velocity and a group box.
  */
 export class SubjectTracker {
-  constructor() {
+  constructor({ coastMs = 700 } = {}) {
+    this.coastMs = coastMs;
+    this.lastSeen = -Infinity;
     this.prevPrimary = null;
     this.prevLandmarks = null;
     this.prevT = 0;
@@ -27,7 +29,7 @@ export class SubjectTracker {
     this.tracks = []; // [{id, center}]
   }
 
-  reset() { this.prevPrimary = null; this.prevLandmarks = null; this.smooth.reset(); this.velocity = 0; this.tracks = []; }
+  reset() { this.prevPrimary = null; this.prevLandmarks = null; this.smooth.reset(); this.velocity = 0; this.tracks = []; this.lastSeen = -Infinity; }
 
   static describe(person) {
     const l = person.landmarks;
@@ -110,6 +112,12 @@ export class SubjectTracker {
       this.prevLandmarks = primary.landmarks;
       this.prevPrimary = primary;
       this.prevT = t;
+      this.lastSeen = t;
+    } else if (this.prevPrimary && t - this.lastSeen <= this.coastMs) {
+      // Detection dropped out (motion blur while the camera moves, a frame without a
+      // confident pose). Keep the last subject briefly instead of "losing" it.
+      const coast = { ...this.prevPrimary, coasting: true };
+      return { count: 1, subjects: [coast], primary: coast, groupBox: null, faceCount: faces.length, coasting: true };
     } else {
       this.prevPrimary = null; this.prevLandmarks = null; this.smooth.reset(); this.velocity = 0;
     }

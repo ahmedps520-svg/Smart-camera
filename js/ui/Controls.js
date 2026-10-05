@@ -101,8 +101,9 @@ export class Controls extends Emitter {
   setLenses(devices, currentId) { const sel = this.el.lens; sel.innerHTML = ''; for (const d of devices) { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || `Camera ${sel.length + 1}`; if (d.deviceId === currentId) o.selected = true; sel.appendChild(o); } sel.parentElement.hidden = devices.length < 2; }
   setFilter(id, recommendedId) { for (const b of this.el.filters.querySelectorAll('.filter-chip')) { b.classList.toggle('active', b.dataset.id === id); b.classList.toggle('recommended', b.dataset.id === recommendedId); } }
   setSelfie(on) { this.el.btnSelfie.setAttribute('aria-pressed', String(on)); }
-  setGuide(rec, sub = '') {
+  setGuide(rec, sub = '', { small = false } = {}) {
     const p = this.el.guidePill;
+    p.classList.toggle('small', small);
     if (!rec) { p.dataset.tone = 'hidden'; this.lastGuideCode = null; this.el.guideSub.textContent = sub; return; }
     if (rec.code !== this.lastGuideCode) { p.classList.remove('bump'); void p.offsetWidth; p.classList.add('bump'); this.lastGuideCode = rec.code; }
     p.dataset.tone = rec.tone || 'neutral'; this.el.guideText.textContent = rec.text || rec.recommendation; this.el.guideArrow.textContent = rec.arrow || '';

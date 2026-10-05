@@ -3,7 +3,7 @@
  * that connects camera, vision, analysis, reasoning, capture, library and UI).
  * Everything runs on-device; there is no network code in the app at all.
  */
-import { OVERALL, COMPOSITION } from './config/defaults.js';
+import { OVERALL, COMPOSITION, SMART_PHOTO } from './config/defaults.js';
 import { Settings } from './settings/Settings.js';
 import { CameraController } from './camera/CameraController.js';
 import { MotionSensor } from './motion/MotionSensor.js';
@@ -54,6 +54,8 @@ class SmartCameraApp {
     this.filterRecommender = new FilterRecommender();
     this.groupAnalyzer = new GroupAnalyzer();
     this.reasoner = new PhotographyReasoner();
+    // Smart Photo uses a calmer coach: wider dead zone, longer hold, one instruction at a time.
+    this.photoReasoner = new PhotographyReasoner(undefined, { enter: SMART_PHOTO.enterRatio, exit: SMART_PHOTO.exitRatio, minHoldMs: SMART_PHOTO.minHoldMs, confirmMs: SMART_PHOTO.confirmMs });
     this.autoCapture = new AutoCaptureController();
     this.processor = new PhotoProcessor();
     this.library = new PhotoLibrary();
@@ -150,7 +152,25 @@ class SmartCameraApp {
 
   // ---------------------------------------------------------------- viewfinder
   /** Size the viewfinder for the chosen photo shape (full screen, 4:3 or 16:9). */
+  /**
+   * Some iOS versions draw web apps under the status bar without reporting a
+   * safe-area inset. Detect that (full-screen height, zero inset) and push the
+   * top bar down so it is never under the clock or the blurred status-bar edge.
+   */
+  adjustTopInset() {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none';
+    document.body.appendChild(probe);
+    const envTop = probe.getBoundingClientRect().height; probe.remove();
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const portrait = window.innerHeight > window.innerWidth;
+    const underStatusBar = portrait && Math.abs(window.innerHeight - screen.height) <= 2;
+    if (isIOS && envTop < 20 && underStatusBar) document.documentElement.style.setProperty('--top-extra', '62px');
+    else document.documentElement.style.removeProperty('--top-extra');
+  }
+
   layoutViewport() {
+    this.adjustTopInset();
     const aspect = this.settings.get('aspect');
     const W = window.innerWidth, H = window.innerHeight;
     const st = this.viewport.style;
@@ -170,6 +190,11 @@ class SmartCameraApp {
       }
     }
     this.overlay.resize();
+    // Tell the overlay where the toolbars are so labels never sit underneath them.
+    const vr = this.viewport.getBoundingClientRect();
+    const tb = $('topbar').getBoundingClientRect(), bb = document.querySelector('.bottombar').getBoundingClientRect();
+    this.overlay.topInset = Math.max(0, tb.bottom - vr.top) + 44;
+    this.overlay.bottomInset = bb.width < vr.width * 0.6 ? 16 : Math.max(0, vr.bottom - bb.top) + 8;
     this.sizePreviewCanvas();
   }
 
@@ -226,7 +251,8 @@ class SmartCameraApp {
     this.review.on('close', () => this.resumeAfterReview());
     this.review.on('retake', () => this.resumeAfterReview());
     this.libraryView.on('close', () => this.resumeAfterReview());
-    this.libraryView.on('open', (rec) => { this.libraryView.hide(); this.review.show(rec, { recommendedFilter: rec.meta?.filter || 'natural', initialFilter: rec.meta?.look || 'natural', strength: rec.meta?.strength ?? 1 }); });
+    this.libraryView.on('open', (rec) => { this.libraryView.hide(); this.review.show(rec); });
+    this.review.on('grid', () => { this.vision.stop(); this.libraryView.show(); });
     this.autoCapture.on('capture', () => this.capture({ auto: true }));
     this.autoCapture.on('state', ({ state, progress }) => this.onAutoState(state, progress));
     this.autoCapture.on('cancel', () => { this.sounds.cancel(); this.controls.setCountdown(null); });
@@ -262,11 +288,11 @@ class SmartCameraApp {
     this.sounds.enabled = s.get('sound'); Haptics.enabled = s.get('haptics');
     this.autoCapture.configure({ holdMs: s.get('holdMs'), thresholds: { overall: s.get('autoThreshold') } });
     this.vision.governor.setMode(s.get('rate'));
-    if (key === 'aspect') { this.layoutViewport(); this.tracker.reset(); this.reasoner.reset(); }
+    if (key === 'aspect') { this.layoutViewport(); this.tracker.reset(); this.reasoner.reset(); this.photoReasoner.reset(); }
     if (key === 'mirrorFront' || key === undefined) { this.camera.mirror = this.camera.facing === 'user' && s.get('mirrorFront'); this.overlay.options.mirror = this.camera.mirror; if (this.camera.isRunning) this.camera.applyVideoTransform(); }
     if (key === 'exposure' && this.camera.isRunning) this.camera.setExposureCompensation(s.get('exposure')).then((ok) => { if (!ok) this.toast.show('Exposure control is not available on this camera'); });
     if (key === 'mode' || key === 'aiEnabled' || key === undefined) {
-      this.reasoner.reset(); this.autoCapture.setEnabled(mode === 'pose' && s.get('aiEnabled'));
+      this.reasoner.reset(); this.photoReasoner.reset(); this.autoCapture.setEnabled(mode === 'pose' && s.get('aiEnabled'));
       this.controls.setCountdown(null); this.controls.setArmed(false);
       this.syncVisionRunning();
       if (!s.get('aiEnabled') || mode === 'photo') { this.controls.setGuide(null); this.controls.setScores(null, false); this.controls.setScene(null, false); this.overlay.draw({ mode: 'photo', motion: this.motion.read(), now: performance.now() }); }
@@ -288,7 +314,7 @@ class SmartCameraApp {
     this.controls.setFlash(s.get('flash'), this.camera.supportsTorch);
     this.controls.setSelfie(this.selfie);
     if (s.get('exposure')) this.camera.setExposureCompensation(s.get('exposure'));
-    this.tracker.reset(); this.reasoner.reset(); this.zoomAdvisor.current = null;
+    this.tracker.reset(); this.reasoner.reset(); this.photoReasoner.reset(); this.zoomAdvisor.current = null;
     this.layoutViewport();
     if (!this.renderer.ok) this.applyPreviewFallback();
     this.syncVisionRunning();
@@ -330,8 +356,12 @@ class SmartCameraApp {
     const zoomAdvice = this.zoomAdvisor.recommend({ composition, scene, presets, currentZoom: this.camera.zoom, tracked, now, allowZoom: !selfie });
     if (a.ran.lighting && (a.frame === 1 || a.frame % 12 === 0)) this.state.filterRec = this.filterRecommender.recommend({ lighting, scene });
 
-    // Layer 2 → validated recommendation.
-    const { stable: rec, raw } = this.reasoner.update({ mode, scene, tracked, composition, pose, lighting, motion, zoom: { current: this.camera.zoom, presets, advice: zoomAdvice }, group, scores }, now);
+    // Layer 2 → validated recommendation. Smart Photo freezes its instruction while the
+    // phone is moving or the subject is momentarily lost, so it never flips mid-move.
+    const smart = mode === 'smart';
+    const freeze = smart && ((motion.available && motion.stability < SMART_PHOTO.freezeBelowStability) || !!tracked.coasting);
+    const { stable: rec, raw } = (smart ? this.photoReasoner : this.reasoner).update({ mode, scene, tracked, composition, pose, lighting, motion, zoom: { current: this.camera.zoom, presets, advice: zoomAdvice }, group, scores }, now, { freeze });
+    this.vision.boost.objects = smart && tracked.count === 0 ? 8 : 0;
     const blocking = composition.issues.some((i) => i.severity >= 2) || (group?.issues.some((i) => i.severity >= 2) ?? false);
     const aligned = composition.hasSubject && !blocking && Math.hypot(composition.deviation.dx, composition.deviation.dy) <= COMPOSITION.tolerances.position * 1.3 && (motion.flat || Math.abs(motion.rollDeg) <= COMPOSITION.levelToleranceDeg * 3);
 
@@ -347,6 +377,7 @@ class SmartCameraApp {
     Object.assign(this.state, { tracked, composition, lighting, scores, rec, aligned, holdProgress, zoomAdvice, pose, group });
 
     // UI.
+    if (smart) { this.renderSmartPhoto({ rec, composition, tracked, motion, aligned, zoomAdvice, now }); return; }
     let guide = this.phrase(rec || (raw.recommendation !== 'NONE' ? raw : null));
     let sub = this.subline({ lighting, zoomAdvice, pose, tracked, mode, raw });
     if (mode === 'pose' && tracked.primary) {
@@ -358,10 +389,46 @@ class SmartCameraApp {
     this.controls.setGuide(guide, sub);
     this.controls.setScores(scores, mode === 'pose' && s.get('scores'), blockers);
     this.controls.setLevel(motion, s.get('horizon'));
-    this.controls.setScene(scene, mode !== 'photo' && tracked.count === 0 && scene !== 'outdoor' && scene !== 'indoor');
+    this.controls.setScene(scene, tracked.count === 0 && scene !== 'outdoor' && scene !== 'indoor');
     this.controls.setZoom(this.camera.zoom, zoomAdvice.action === 'ZOOM' ? zoomAdvice.zoom : null);
     if (this.state.filterRec && (a.frame === 1 || a.frame % 12 === 0)) this.controls.setFilter(s.get('filter'), this.state.filterRec.id);
     this.overlay.draw({ tracked, composition, motion, recommendation: rec, mode, aligned, holdProgress, now });
+  }
+
+  /**
+   * Smart Photo UI: a yellow ring around the subject and one short instruction
+   * beside it. No scores, no target box, no sub-lines.
+   */
+  renderSmartPhoto({ rec, composition, tracked, motion, aligned, zoomAdvice, now }) {
+    const s = this.settings;
+    const short = this.smartInstruction(rec);
+    const perfect = !!rec && (rec.code === 'PERFECT' || rec.code === 'EVERYONE_IN_FRAME') && rec.captureReady && aligned;
+    if (perfect && !this._wasPerfect) Haptics.tap();
+    this._wasPerfect = perfect;
+    const hasRing = !!composition.subjectBox;
+    // Without a subject, only a level/horizon hint may appear (small, at the top).
+    this.controls.setGuide(!hasRing && short && (short.code === 'LEVEL_CAMERA' || short.code === 'TILT_UP' || short.code === 'TILT_DOWN') ? { ...short, tone: 'neutral' } : null, '', { small: true });
+    this.controls.setScores(null, false);
+    this.controls.setScene(null, false);
+    this.controls.setLevel(motion, s.get('horizon'));
+    this.controls.setZoom(this.camera.zoom, null);   // zoom advice appears only as the ring's label
+    this.overlay.draw({ mode: 'smart', motion, now, ring: hasRing ? { box: composition.subjectBox, coasting: !!tracked.coasting, perfect, label: perfect ? null : short } : null });
+  }
+
+  /** Short, single instruction for Smart Photo (or null). */
+  smartInstruction(rec) {
+    if (!rec) return null;
+    let code = rec.code, zoom = rec.zoom;
+    if (code === 'SUBJECT_EDGE') code = rec.arrow === '←' ? 'MOVE_LEFT' : 'MOVE_RIGHT';
+    else if (code === 'MORE_HEADROOM') code = 'TILT_UP';
+    else if (code === 'LESS_HEADROOM') code = 'TILT_DOWN';
+    else if (code === 'GROUP_EDGE') code = 'MOVE_BACK';
+    const base = {
+      MOVE_LEFT: ['Move left', '←'], MOVE_RIGHT: ['Move right', '→'], TILT_UP: ['Tilt up', '↑'], TILT_DOWN: ['Tilt down', '↓'],
+      MOVE_CLOSER: ['Move closer', ''], MOVE_BACK: ['Step back', ''], LEVEL_CAMERA: ['Level the phone', ''], ZOOM: [zoom ? `Zoom ${zoom}×` : '', ''],
+    }[code];
+    if (!base || !base[0]) return null;
+    return this.phrase({ code, text: base[0], arrow: base[1], tone: 'warn' });
   }
 
   /**
@@ -446,8 +513,13 @@ class SmartCameraApp {
     this.controls.setThumb(this._thumbUrl, count);
   }
 
-  openLibrary() { this.vision.stop(); this.libraryView.show(); }
-  resumeAfterReview() { this.tracker.reset(); this.reasoner.reset(); this.syncVisionRunning(); }
+  /** Thumbnail tap: open the newest photo; swipe to browse the rest. */
+  async openLibrary() {
+    this.vision.stop();
+    const ok = await this.review.show();
+    if (!ok) this.syncVisionRunning();
+  }
+  resumeAfterReview() { this.tracker.reset(); this.reasoner.reset(); this.photoReasoner.reset(); this.syncVisionRunning(); }
 }
 
 const app = new SmartCameraApp();

@@ -31,6 +31,8 @@ export class VisionEngine extends Emitter {
     this.lastT = 0;
     this.enabled = { pose: true, face: true, objects: true, scene: true, lighting: true };
     this.failures = {};
+    /** Per-stage overrides (run at least every N frames), set by the app when it needs a stage more often. */
+    this.boost = {};
     this._raf = 0;
     /** Returns the visible crop of the video frame; set by the app. */
     this.cropProvider = () => ({ x: 0, y: 0, w: 1, h: 1 });
@@ -85,7 +87,7 @@ export class VisionEngine extends Emitter {
     // Each stage is isolated: one failing model never blocks the others. A stage
     // that keeps failing is switched off so the camera experience is unaffected.
     const run = (stage, fn) => {
-      if (!this.enabled[stage] || !due(sched[stage])) return;
+      if (!this.enabled[stage] || !due(Math.min(sched[stage], this.boost[stage] || Infinity))) return;
       try { fn(); ran[stage] = true; this.failures[stage] = 0; }
       catch (e) {
         this.failures[stage] = (this.failures[stage] || 0) + 1;

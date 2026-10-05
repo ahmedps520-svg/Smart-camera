@@ -53,6 +53,7 @@ export class Overlay {
     const tracked = s.tracked;
     const aiOn = s.mode !== 'photo';
     if (!aiOn) { this.targetFilter.reset(); this.subjectFilter.reset(); return; }
+    if (s.mode === 'smart') { this.drawSmartPhoto(s, m); return; }
 
     // Other people (group): light markers.
     if (tracked?.subjects?.length > 1) {
@@ -88,6 +89,68 @@ export class Overlay {
     } else this.targetFilter.reset();
     // Horizon line estimate for landscapes.
     if (comp?.horizon && !comp.hasSubject) { ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.setLineDash([4, 8]); ctx.lineWidth = 1; const y = m.y(comp.horizon.y); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(this.w, y); ctx.stroke(); ctx.restore(); }
+  }
+
+  /**
+   * Smart Photo: one clear yellow ring around the subject and one small
+   * instruction next to it. Nothing else.
+   * s.ring = { box, coasting, perfect, label: {text, arrow} | null, color }
+   */
+  drawSmartPhoto(s, m) {
+    const ctx = this.ctx, r = s.ring;
+    if (!r?.box) { this.subjectFilter.reset(); this.ringAlpha = 0; return; }
+    const raw = m.box(r.box);
+    const pad = Math.max(10, Math.min(raw.w, raw.h) * 0.08);
+    const b = this.subjectFilter.push({ x: raw.x - pad, y: raw.y - pad, w: raw.w + pad * 2, h: raw.h + pad * 2 }, s.now);
+    // Keep the ring on screen even when the subject is partly out of frame.
+    const x = Math.max(4, b.x), y = Math.max(4, b.y);
+    const box = { x, y, w: Math.min(this.w - 4, b.x + b.w) - x, h: Math.min(this.h - 4, b.y + b.h) - y };
+    if (box.w < 8 || box.h < 8) return;
+    this.ringAlpha = Math.min(1, (this.ringAlpha || 0) + 0.15);
+    const alpha = this.ringAlpha * (r.coasting ? 0.55 : 1);
+    const color = r.color || '#FFD60A';
+    const radius = Math.min(box.w, box.h) / 2;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color; ctx.lineWidth = r.perfect ? 4 : 3;
+    ctx.shadowColor = r.perfect ? color : 'rgba(0,0,0,0.55)'; ctx.shadowBlur = r.perfect ? 14 : 6;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(box.x, box.y, box.w, box.h, radius); else ctx.rect(box.x, box.y, box.w, box.h);
+    ctx.stroke();
+    ctx.restore();
+
+    // Direction chevron on the ring edge.
+    const dir = { '←': [-1, 0], '→': [1, 0], '↑': [0, -1], '↓': [0, 1] }[r.label?.arrow];
+    if (dir && !r.perfect) {
+      const cx = box.x + box.w / 2 + dir[0] * (box.w / 2 + 16), cy = box.y + box.h / 2 + dir[1] * (box.h / 2 + 16);
+      const px = Math.min(this.w - 14, Math.max(14, cx)), py = Math.min(this.h - 14, Math.max(14, cy));
+      const ang = Math.atan2(dir[1], dir[0]);
+      ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 4;
+      ctx.translate(px, py); ctx.rotate(ang);
+      ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(-6, -8); ctx.lineTo(-2, 0); ctx.lineTo(-6, 8); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // Small instruction label under the ring (or above it if there is no room).
+    const text = r.perfect ? '✓ Perfect' : r.label?.text;
+    if (!text) return;
+    ctx.save();
+    ctx.font = '600 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif';
+    const tw = ctx.measureText(text).width;
+    const lw = tw + 20, lh = 26;
+    let lx = box.x + box.w / 2 - lw / 2;
+    lx = Math.min(this.w - lw - 8, Math.max(8, lx));
+    const below = box.y + box.h + 10;
+    const bottomLimit = this.h - (this.bottomInset || 220);
+    let ly = below + lh <= bottomLimit ? below : box.y - lh - 10;
+    if (ly < (this.topInset || 110)) ly = Math.min(bottomLimit - lh, box.y + 12);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(lx, ly, lw, lh, lh / 2); else ctx.rect(lx, ly, lw, lh); ctx.fill();
+    ctx.fillStyle = r.perfect ? color : '#fff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, lx + lw / 2, ly + lh / 2 + 0.5);
+    ctx.restore();
   }
 
   drawGrid(ctx) {

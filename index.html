@@ -167,7 +167,12 @@
 
     <!-- Review (after capture) -->
     <section class="review" id="review" hidden>
-      <div class="review-img-wrap"><img id="reviewImg" alt="Captured photo" /></div>
+      <header class="review-head">
+        <button id="rvBack" class="link-btn">‹ Camera</button>
+        <span id="rvCounter" class="review-counter"></span>
+        <button id="rvAll" class="link-btn">All photos</button>
+      </header>
+      <div class="review-img-wrap" id="rvStage"><img id="reviewImg" alt="Captured photo" draggable="false" /></div>
       <div class="review-meta" id="reviewMeta"></div>
       <div class="review-filters" id="reviewFilters"></div>
       <div class="review-strength"><span>Strength</span><input type="range" id="rvStrength" min="0" max="1.5" step="0.05" value="1" aria-label="Filter strength" /><b id="rvStrengthV">100%</b></div>

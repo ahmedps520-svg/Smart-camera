@@ -23,7 +23,10 @@ export class ZoomAdvisor {
 
     if (composition?.hasSubject && composition.sizeRatio) {
       const r = composition.sizeRatio; // current / target height
-      if (r < 1 - C.hysteresis || r > 1 + C.hysteresis * 1.5) {
+      // Never suggest zooming in on a subject that already touches the frame edges.
+      const touching = (composition.issues || []).some((i) => i.code === 'EDGE_LEFT' || i.code === 'EDGE_RIGHT' || i.code === 'TOO_BIG' || i.code === 'MORE_HEADROOM');
+      if (touching && r < 1) { /* leave zoom alone */ }
+      else if (r < 1 - C.hysteresis || r > 1 + C.hysteresis * 1.5) {
         desired = clamp(currentZoom / r, minP, C.maxDigital);
         confidence = clamp(Math.abs(1 - r), 0.3, 0.95);
         reason = r < 1 ? 'Subject is small in the frame' : 'Subject fills too much of the frame';

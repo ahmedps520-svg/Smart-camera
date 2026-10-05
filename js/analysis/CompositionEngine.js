@@ -81,12 +81,13 @@ export class CompositionEngine {
     scores.level = toleranceScore(rollDeg, C.levelToleranceDeg, levelWeightHigh ? 4 : 8);
     if (Math.abs(rollDeg) > C.levelToleranceDeg * (levelWeightHigh ? 1.5 : 3)) issues.push({ code: 'LEVEL', severity: levelWeightHigh ? 2 : 1, text: 'Level camera' });
 
-    let subjectBox = null, subjectIsGroup = false;
-    if (type === 'GROUP' && tracked.groupBox) { subjectBox = tracked.groupBox; subjectIsGroup = true; }
-    else if (tracked.primary) subjectBox = tracked.primary.smoothBox || tracked.primary.box;
-    else if (type === 'NEGATIVE_SPACE' || type === 'CENTER') {
-      const o = objects.filter((o) => o.label !== 'person').sort((a, b) => b.box.w * b.box.h - a.box.w * a.box.h)[0];
-      if (o) subjectBox = o.box;
+    let subjectBox = null, subjectIsGroup = false, subjectKind = null;
+    if (type === 'GROUP' && tracked.groupBox) { subjectBox = tracked.groupBox; subjectIsGroup = true; subjectKind = 'group'; }
+    else if (tracked.primary) { subjectBox = tracked.primary.smoothBox || tracked.primary.box; subjectKind = 'person'; }
+    else if (type !== 'HORIZON' && type !== 'SYMMETRY') {
+      // No person: the largest confident object (pet, food, product, vehicle…) is the subject.
+      const o = objects.filter((o) => o.label !== 'person' && o.score >= 0.5 && o.box.w * o.box.h > 0.01 && o.box.w * o.box.h < 0.9).sort((a, b) => b.box.w * b.box.h - a.box.w * a.box.h)[0];
+      if (o) { subjectBox = o.box; subjectKind = o.label; }
     }
 
     let horizon = null, symmetry = null;
@@ -108,14 +109,14 @@ export class CompositionEngine {
         framing = scores.level * 0.6 + symmetry * 0.4;
       }
       const target = type === 'CENTER' ? { x: 0.3, y: 0.3, w: 0.4, h: 0.4 } : null;
-      return { type, targetBox: target, idealCenter: null, deviation: { dx: 0, dy: 0 }, sizeRatio: 1, headroom: null, framingScore: Math.round(framing * 100), issues, horizon, symmetry, clutter, scores, hasSubject: false };
+      return { type, targetBox: target, idealCenter: null, deviation: { dx: 0, dy: 0 }, sizeRatio: 1, headroom: null, framingScore: Math.round(framing * 100), issues, horizon, symmetry, clutter, scores, hasSubject: false, subjectBox: null, subjectKind: null };
     }
 
     // ---------- Subject present ----------
     const cx = subjectBox.x + subjectBox.w / 2, cy = subjectBox.y + subjectBox.h / 2;
     const primary = tracked.primary;
     let idealX = 0.5, idealY = 0.5, targetH = subjectBox.h;
-    const shot = subjectIsGroup ? 'group' : (primary?.shotType || 'half');
+    const shot = subjectIsGroup ? 'group' : (primary?.shotType || 'object');
 
     if (type === 'RULE_OF_THIRDS') {
       // Lead room: a subject looking toward image-left sits on the right third, and vice versa.
@@ -139,7 +140,7 @@ export class CompositionEngine {
         // Full / three-quarter body: keep ideal headroom above the head, body filling downward.
         idealY = Math.max(0.5, C.headroom.ideal + subjectBox.h / 2);
       }
-      targetH = Math.min(0.92, C.subjectHeight[shot] ?? 0.6);
+      targetH = shot === 'object' ? Math.min(0.6, Math.max(0.3, subjectBox.h)) : Math.min(0.92, C.subjectHeight[shot] ?? 0.6);
     } else if (type === 'CENTER' || type === 'SYMMETRY') {
       idealX = 0.5; idealY = type === 'SYMMETRY' ? 0.5 : 0.52;
       targetH = subjectIsGroup ? C.subjectHeight.group : clamp(subjectBox.h, 0.4, 0.7);
@@ -193,6 +194,6 @@ export class CompositionEngine {
     const framingScore = Math.round((acc / total) * 100);
     const targetBox = { x: idealX - (subjectBox.w * (targetH / subjectBox.h)) / 2, y: idealY - targetH / 2, w: subjectBox.w * (targetH / subjectBox.h), h: targetH };
     targetBox.w = Math.min(targetBox.w, 0.95); targetBox.x = clamp(targetBox.x, 0.02, 0.98 - targetBox.w); targetBox.y = clamp(targetBox.y, 0.02, 0.98 - targetBox.h);
-    return { type, targetBox, idealCenter: { x: idealX, y: idealY }, deviation: { dx, dy }, sizeRatio, headroom, framingScore, issues, horizon, symmetry, clutter, scores, hasSubject: true, shot };
+    return { type, targetBox, idealCenter: { x: idealX, y: idealY }, deviation: { dx, dy }, sizeRatio, headroom, framingScore, issues, horizon, symmetry, clutter, scores, hasSubject: true, shot, subjectBox, subjectKind };
   }
 }

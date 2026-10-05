@@ -14,7 +14,7 @@ Point your phone at a scene; local vision models understand it, the composition 
 | Live camera | Full-screen GPU (WebGL) preview, one-tap **Selfie** button that works in every mode, photo shape (full screen / 4:3 / 16:9), rear/front switch, physical lens picker, hardware zoom where the browser exposes it plus digital zoom, pinch / slider / preset chips, torch, exposure compensation, tap to focus, timer, flash modes |
 | Layer 1: real-time vision | MediaPipe Pose Landmarker (up to 4 people), BlazeFace face detector, EfficientDet-Lite0 object detector, EfficientNet-Lite0 scene classifier, pixel statistics for lighting. Adaptive schedule with frame skipping; expensive models run only every few seconds |
 | Layer 2: photography reasoning | Rules engine that consumes structured scene data (never frames) and returns a validated, structured recommendation. Debounced with hysteresis so guidance never flickers. Pluggable: a local LLM adapter can replace it and goes through the same strict validator |
-| Smart Photo mode | Live coaching: Move left/right, Tilt up/down, Level camera, Zoom to 2×, More headroom, Subject too close to edge, Turn toward the light, Perfect framing |
+| Smart Photo mode | Deliberately minimal: a yellow rounded ring follows the subject (person, group, or the main object such as a pet or plate) with one small instruction beside it (Move left/right, Tilt up/down, Move closer, Step back, Level the phone, Zoom 2×, ✓ Perfect). A wider dead zone and a 1.6 s hold keep it calm, the instruction freezes while the phone is moving, and the subject is kept through brief detection dropouts so it is not lost while you reframe |
 | Smart Pose mode | Continuously scored Pose / Framing / Lighting / Stability / Overall. When the overall score passes the threshold and no score is below its floor, a short hold, a "Perfect" countdown, then auto capture. Brief dips are tolerated; real movement (measured in torso lengths) cancels. Scores that are blocking the capture turn red and are named under the guide. The same pose is re-shot only after it changes or 8 s pass. Works with the front camera for hands-free selfies |
 | Composition engine | Rule of thirds with lead room, centre, symmetry (mirror score), horizon placement (estimated horizon row), group framing, negative space for vehicles, headroom, edge margins, subject size, clutter |
 | Dynamic composition box | Smoothed (One Euro filter) "SUBJECT HERE" box that tracks the subject and turns green with PERFECT when aligned |
@@ -24,7 +24,7 @@ Point your phone at a scene; local vision models understand it, the composition 
 | Motion | DeviceMotion-based roll, horizon guide with LEVEL readout, motion stability score. Works with both the iOS and Android gravity sign conventions; hidden when the phone points straight up or down |
 | Scene understanding | portrait, group, landscape, architecture, food, pet, vehicle, sunset, night, product, street, beach, indoor, outdoor — sticky classification that influences composition and filters |
 | Multi-person | Tracks everyone, checks who is cut off, spacing, balance, face visibility; no auto capture until the group is still |
-| Library | Full-quality originals in IndexedDB, thumbnails, review with retake / favourite / share / download, filter export as a separate copy. Never touches the user's own photos |
+| Library | Full-quality originals in IndexedDB. The thumbnail opens the newest photo; swipe left/right to browse, swipe down to return to the camera, *All photos* for the grid. Favourite, per-photo look and strength, share / download. Never touches the user's own photos |
 | Performance | WebGL (GPU) delegate for pose and face, XNNPACK (CPU) for the rare int8 models, `requestVideoFrameCallback`, frame skipping, low-res pixel sampling, reused buffers |
 | Thermal management | The web has no thermal API, so a software governor watches inference latency and dropped frames and steps the analysis tier down (fewer model runs, lower analysis resolution) and back up. The preview is never throttled. Battery-low lowers the tier where the Battery API exists |
 | Privacy | No uploads, no analytics, no face recognition, no biometric storage, analysis data discarded every frame. See About & privacy in the app |
@@ -116,7 +116,7 @@ video frame ─▶ VisionEngine (pose · face · objects · scene · pixels)
 ## Tests
 
 ```bash
-npm test          # node --test tests/*.test.js — 45 unit tests over the pure logic modules
+npm test          # node --test tests/*.test.js — 50 unit tests over the pure logic modules
 ```
 
 Browser verification during development used headless Chromium with a fake camera fed by real test images (person, portrait, food, animals): models load from the vendored files, a person is detected and tracked, guidance and the composition box appear, the scene classifier maps labels (cheeseburger → food, cats/dogs → pet, seashore → beach), the shutter saves a full-resolution JPEG to the library with post-capture analysis, and Smart Pose auto-captures after the hold window and countdown.

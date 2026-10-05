@@ -5,8 +5,8 @@
  */
 export const MODELS = {
   // Swap any entry to use a different on-device model. Paths are relative to the app root.
-  pose: { path: 'models/pose_landmarker_lite.task', numPoses: 4, minDetection: 0.5, minTracking: 0.5, minPresence: 0.5 },
-  face: { path: 'models/blaze_face_short_range.tflite', minDetection: 0.5 },
+  pose: { path: 'models/pose_landmarker_lite.task', numPoses: 4, minDetection: 0.4, minTracking: 0.4, minPresence: 0.4 },
+  face: { path: 'models/blaze_face_short_range.tflite', minDetection: 0.45 },
   // int8 models run on the CPU (XNNPACK) delegate: they are small, run rarely and the GPU delegate rejects int8 output tensors.
   objects: { path: 'models/efficientdet_lite0.tflite', maxResults: 6, scoreThreshold: 0.45, delegate: 'CPU' },
   scene: { path: 'models/efficientnet_lite0.tflite', maxResults: 5, scoreThreshold: 0.1, delegate: 'CPU' },
@@ -91,6 +91,19 @@ export const AUTO_CAPTURE = {
   requirePoseChange: 0.2,// torso lengths the pose must change before shooting again…
   repeatAfterMs: 8000,   // …or this long holding the same pose
   groupSettleMs: 600,    // extra hold when more than one person is in frame
+};
+
+/**
+ * Smart Photo coaching: one small instruction at a time, held longer, with a wider
+ * dead zone, and frozen while the phone is moving (the user is already responding).
+ */
+export const SMART_PHOTO = {
+  enterRatio: 1.7,       // deviation must exceed tolerance × this to start an instruction…
+  exitRatio: 0.5,        // …and fall below tolerance × this to clear it
+  minHoldMs: 1600,
+  confirmMs: 650,
+  freezeBelowStability: 0.55,
+  ring: '#FFD60A',
 };
 
 /** Guidance debouncing / hysteresis. */
