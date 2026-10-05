@@ -31,7 +31,7 @@ Point your phone at a scene; local vision models understand it, the composition 
 
 ## Try it
 
-Published with GitHub Pages: enable **Settings → Pages → Build and deployment → GitHub Actions** on the repository. The workflow in `.github/workflows/pages.yml` runs the unit tests and deploys the site on every push to `main` (or run it manually from the Actions tab).
+Live at **https://ahmedps520-svg.github.io/Smart-camera/**. GitHub Pages serves the `gh-pages` branch; the workflow in `.github/workflows/pages.yml` runs the unit tests on every push to `main` and, if they pass, publishes `main` to `gh-pages`.
 
 Locally:
 
