@@ -30,33 +30,27 @@
       <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
       <div id="flash" class="flash" aria-hidden="true"></div>
       <div id="focusRing" class="focus-ring" aria-hidden="true"></div>
+      <div id="finderText" class="finder-text" hidden>AI is finding the shot...</div>
+      <div id="finderCount" class="finder-count" hidden>3</div>
     </div>
 
     <!-- Top bar -->
     <header class="topbar" id="topbar">
       <div class="tb-left">
-        <button id="btnFlash" class="icon-btn" aria-label="Flash" data-state="off" title="Flash">
-          <svg viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
-          <span class="icon-badge" id="flashBadge"></span>
-        </button>
-        <button id="btnTimer" class="icon-btn" aria-label="Timer" title="Timer">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v4l3 2M9 2h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          <span class="icon-badge" id="timerBadge"></span>
-        </button>
+        <button id="btnGrid" class="icon-btn tb tb-grid" aria-label="Grid" aria-pressed="true" title="Grid"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg></button>
+        <button id="btnLevel" class="icon-btn tb" aria-label="Level" aria-pressed="true" title="Level"><svg viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg></button>
       </div>
-      <button id="btnAI" class="pill-btn ai-pill" aria-pressed="true" title="On-device AI">
-        <span class="dot"></span><span id="aiLabel">ON-DEVICE</span>
-      </button>
       <div class="tb-right">
-        <button id="btnSelfie" class="selfie-btn" aria-pressed="false" aria-label="Selfie camera" title="Selfie">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21c1.2-4 4.3-6 8-6s6.8 2 8 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          <span>SELFIE</span>
-        </button>
-        <button id="btnPanel" class="icon-btn" aria-label="More controls" aria-expanded="false" title="Controls">
-          <svg viewBox="0 0 24 24"><path d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
-        </button>
+        <button id="btnSelfie" class="icon-btn tb" aria-pressed="false" aria-label="Selfie camera" title="Selfie"><svg viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="11.3" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.6 17c.7-1.7 2-2.6 3.4-2.6s2.7.9 3.4 2.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+        <button id="btnExposure" class="icon-btn tb" aria-label="Exposure" aria-expanded="false" title="Exposure"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M5.6 18.4l1.6-1.6M16.8 7.2l1.6-1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg></button>
+        <button id="btnPanel" class="icon-btn tb" aria-label="More controls" aria-expanded="false" title="More"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18" cy="12" r="1.8"/></svg></button>
       </div>
     </header>
+    <div class="expo-pop" id="expoPop" hidden>
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M5.6 18.4l1.6-1.6M16.8 7.2l1.6-1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+      <input type="range" id="expoSlider" min="-2" max="2" step="0.1" value="0" aria-label="Exposure" />
+      <b id="expoV">0.0</b>
+    </div>
 
     <!-- Guidance -->
     <div class="guidance" id="guidance" aria-live="polite">
@@ -93,6 +87,7 @@
 
     <!-- Bottom controls -->
     <footer class="bottombar">
+      <div class="status-line" id="statusLine" data-tone="gray">Tap ✦ to scan a new scene</div>
       <div class="aperture" id="aperture" hidden>
         <span class="aperture-f" id="apertureF">f/2.8</span>
         <input type="range" id="apertureSlider" min="0" max="1" step="0.01" value="0.6" aria-label="Background blur" />
@@ -102,24 +97,33 @@
         <div class="zoom-hint" id="zoomHint" hidden></div>
       </div>
       <input id="zoomSlider" class="zoom-slider" type="range" min="1" max="10" step="0.01" value="1" aria-label="Zoom" hidden />
-      <div class="modes" id="modes" role="tablist">
-        <button class="mode" role="tab" data-mode="photo">PHOTO</button>
-        <button class="mode" role="tab" data-mode="smart">SMART</button>
-        <button class="mode" role="tab" data-mode="pose">POSE</button>
-        <button class="mode" role="tab" data-mode="portrait">PORTRAIT</button>
-      </div>
       <div class="shutter-row">
-        <button id="btnGallery" class="thumb" aria-label="Open photo library"><img id="thumbImg" alt="" hidden /><span class="thumb-count" id="thumbCount" hidden></span></button>
+        <button id="btnGallery" class="thumb" aria-label="Open photos"><img id="thumbImg" alt="" hidden /><span class="thumb-count" id="thumbCount" hidden></span></button>
         <button id="btnShutter" class="shutter" aria-label="Take photo"><span class="shutter-inner"></span></button>
-        <button id="btnFlip" class="icon-btn round" aria-label="Switch camera" title="Switch camera">
-          <svg viewBox="0 0 24 24"><path d="M20 7h-3l-2-2H9L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 13a3 3 0 0 0 5.2 2.1M15 13a3 3 0 0 0-5.2-2.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 16h2v-2M10 10H8v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        </button>
+        <button id="btnScan" class="scan-btn" data-state="idle" aria-label="Find the shot" title="Find the shot"><svg viewBox="0 0 24 24" class="ic-spark"><path d="M10 3.5l1.6 4.4 4.4 1.6-4.4 1.6L10 15.5l-1.6-4.4L4 9.5l4.4-1.6zM17.5 13l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z"/></svg><svg viewBox="0 0 24 24" class="ic-close"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg><svg viewBox="0 0 24 24" class="ic-again"><path d="M19 12a7 7 0 1 1-2.05-4.95M19 4.5V8h-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
       </div>
     </footer>
 
     <!-- Expandable control panel -->
     <section class="panel" id="panel" aria-hidden="true">
       <div class="panel-handle"></div>
+      <div class="panel-quick">
+        <button id="btnFlash" class="icon-btn quick" aria-label="Flash" data-state="off" title="Flash">
+          <svg viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+          <span class="icon-badge" id="flashBadge"></span>
+        </button>
+        <button id="btnTimer" class="icon-btn quick" aria-label="Timer" title="Timer">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v4l3 2M9 2h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span class="icon-badge" id="timerBadge"></span>
+        </button>
+        <button id="btnAI" class="pill-btn ai-pill" aria-pressed="true" title="On-device AI"><span class="dot"></span><span id="aiLabel">ON-DEVICE</span></button>
+      </div>
+      <div class="modes" id="modes" role="tablist" aria-label="Camera mode">
+        <button class="mode" role="tab" data-mode="photo">✦ AI Camera</button>
+        <button class="mode" role="tab" data-mode="smart">Smart guide</button>
+        <button class="mode" role="tab" data-mode="pose">Smart Pose</button>
+        <button class="mode" role="tab" data-mode="portrait">Portrait</button>
+      </div>
       <div class="panel-grid">
         <label class="ctl"><span>AI assist</span><input type="checkbox" id="ctlAI" checked /></label>
         <label class="ctl"><span>Raise hand</span><input type="checkbox" id="ctlHand" checked /></label>
@@ -139,11 +143,6 @@
         <select id="ctlGrid" aria-label="Grid"><option value="off">Off</option><option value="thirds">Rule of thirds</option><option value="golden">Golden ratio</option><option value="center">Centre cross</option></select>
       </div>
       <div class="ctl-row">
-        <span>Exposure</span>
-        <input type="range" id="ctlExposure" min="-2" max="2" step="0.1" value="0" aria-label="Exposure compensation" />
-        <b id="ctlExposureV">0.0</b>
-      </div>
-      <div class="ctl-row">
         <span>Filter</span>
         <div class="filters" id="filters"></div>
       </div>
@@ -153,8 +152,12 @@
         <b id="ctlStrengthV">100%</b>
       </div>
       <div class="ctl-row">
+        <span>Specs frame name</span>
+        <input type="text" id="ctlDevice" class="text-input" maxlength="40" aria-label="Device name for the Specs frame" />
+      </div>
+      <div class="ctl-row">
         <span>Photo shape</span>
-        <select id="ctlAspect" aria-label="Photo shape"><option value="full">Full screen</option><option value="4:3">4:3 (more detail)</option><option value="16:9">16:9</option></select>
+        <select id="ctlAspect" aria-label="Photo shape"><option value="4:3">3:4 (default)</option><option value="full">Full screen</option><option value="16:9">9:16</option></select>
       </div>
       <div class="ctl-row">
         <span>Lens</span>
@@ -187,32 +190,26 @@
     <!-- Review (after capture) -->
     <section class="review" id="review" hidden>
       <header class="review-head">
-        <button id="rvBack" class="link-btn">‹ Camera</button>
+        <button id="rvBack" class="icon-btn small" aria-label="Back to camera" title="Camera"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
         <span id="rvCounter" class="review-counter"></span>
         <div class="review-head-right">
-          <button id="rvDelete" class="icon-btn small" aria-label="Delete photo" title="Delete"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button id="rvFavorite" class="icon-btn small fav" aria-pressed="false" aria-label="Favourite">♡</button>
           <button id="rvAll" class="link-btn">All</button>
         </div>
       </header>
       <div class="review-img-wrap" id="rvStage"><img id="reviewImg" alt="Captured photo" draggable="false" /></div>
       <div class="review-meta" id="reviewMeta"></div>
-      <div class="review-tabs" role="tablist">
-        <button class="review-tab" data-tab="looks" aria-selected="true">Looks</button>
-        <button class="review-tab" data-tab="edit" aria-selected="false">Edit</button>
-      </div>
-      <div class="review-pane" id="paneLooks">
-        <div class="review-filters" id="reviewFilters"></div>
-        <div class="review-strength"><span>Strength</span><input type="range" id="rvStrength" min="0" max="1.5" step="0.05" value="1" aria-label="Filter strength" /><b id="rvStrengthV">100%</b></div>
-      </div>
+      <div class="looks-strip" id="reviewFilters" role="listbox" aria-label="Looks"></div>
+      <div class="frames-row" id="frameRow" role="listbox" aria-label="Frames"></div>
       <div class="review-pane" id="paneEdit" hidden>
         <div class="edit-top"><button id="rvAuto" class="chip-btn">✦ Auto</button><button id="rvResetEdit" class="chip-btn">Reset</button></div>
         <div class="edit-grid" id="editSliders"></div>
+        <div class="review-strength"><span>Look strength</span><input type="range" id="rvStrength" min="0" max="1.5" step="0.05" value="1" aria-label="Look strength" /><b id="rvStrengthV">100%</b></div>
       </div>
-      <div class="review-actions">
-        <button id="rvRetake" class="action">Retake</button>
-        <button id="rvFavorite" class="action" aria-pressed="false">♡</button>
-        <button id="rvShare" class="action primary">Save / Share</button>
-        <button id="rvDone" class="action">Done</button>
+      <div class="review-bottom">
+        <button id="rvDelete" class="round-btn" aria-label="Delete photo" title="Delete"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button id="rvAdjust" class="round-btn" aria-pressed="false" aria-label="Adjust" title="Adjust"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></button>
+        <button id="rvShare" class="save-pill">✓ Save</button>
       </div>
     </section>
 

@@ -17,7 +17,7 @@ export class Controls extends Emitter {
       countdown: $('countdown'), countdownText: $('countdownText'), countdownArc: $('countdownArc'),
       scores: $('scores'), levelReadout: $('levelReadout'), levelText: $('levelText'), sceneChip: $('sceneChip'),
       zoomChips: $('zoomChips'), zoomHint: $('zoomHint'), zoomSlider: $('zoomSlider'), modes: $('modes'),
-      btnShutter: $('btnShutter'), btnFlip: $('btnFlip'), btnFlash: $('btnFlash'), flashBadge: $('flashBadge'), btnTimer: $('btnTimer'), timerBadge: $('timerBadge'),
+      btnShutter: $('btnShutter'), btnScan: $('btnScan'), statusLine: $('statusLine'), btnGrid: $('btnGrid'), btnLevel: $('btnLevel'), btnExposure: $('btnExposure'), expoPop: $('expoPop'), btnFlash: $('btnFlash'), flashBadge: $('flashBadge'), btnTimer: $('btnTimer'), timerBadge: $('timerBadge'),
       btnPanel: $('btnPanel'), btnSelfie: $('btnSelfie'), panel: $('panel'), btnAI: $('btnAI'), aiLabel: $('aiLabel'), btnGallery: $('btnGallery'), thumbImg: $('thumbImg'), thumbCount: $('thumbCount'),
       flash: $('flash'), focusRing: $('focusRing'), perf: $('perfReadout'), filters: $('filters'), lens: $('ctlLens'), toast: $('toast'),
     };
@@ -37,7 +37,10 @@ export class Controls extends Emitter {
     e.btnShutter.addEventListener('pointercancel', () => { if (bursting) release(); pressed = false; clearTimeout(holdTimer); });
     e.btnShutter.addEventListener('contextmenu', (ev) => ev.preventDefault());
     e.btnShutter.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); this.emit('shutter'); } });
-    e.btnFlip.addEventListener('click', () => this.emit('flip'));
+    e.btnScan.addEventListener('click', () => { this.closePopovers(); this.emit('scan'); });
+    e.btnGrid.addEventListener('click', () => this.emit('setting', { key: 'grid', value: s.get('grid') === 'off' ? 'thirds' : 'off' }));
+    e.btnLevel.addEventListener('click', () => this.emit('setting', { key: 'horizon', value: !s.get('horizon') }));
+    e.btnExposure.addEventListener('click', () => { const open = e.expoPop.hidden; e.expoPop.hidden = !open; e.btnExposure.setAttribute('aria-expanded', String(open)); });
     e.btnSelfie.addEventListener('click', () => this.emit('selfie'));
     e.btnFlash.addEventListener('click', () => { const order = ['off', 'auto', 'on']; const next = order[(order.indexOf(s.get('flash')) + 1) % order.length]; this.emit('flash', next); });
     e.btnTimer.addEventListener('click', () => { const order = [0, 3, 10]; const next = order[(order.indexOf(s.get('timer')) + 1) % order.length]; this.emit('timer', next); });
@@ -55,8 +58,12 @@ export class Controls extends Emitter {
     const ap = $('apertureSlider'); ap.value = s.get('portraitBlur'); this.setApertureLabel(s.get('portraitBlur'));
     ap.addEventListener('input', () => { const v = parseFloat(ap.value); this.setApertureLabel(v); this.emit('setting', { key: 'portraitBlur', value: v }); });
     for (const [id, key] of Object.entries(map)) { const el = $(id); el.checked = !!s.get(key); el.addEventListener('change', () => this.emit('setting', { key, value: el.checked })); }
-    const ex = $('ctlExposure'); ex.value = s.get('exposure'); $('ctlExposureV').textContent = Number(s.get('exposure')).toFixed(1);
-    ex.addEventListener('input', () => { $('ctlExposureV').textContent = Number(ex.value).toFixed(1); this.emit('setting', { key: 'exposure', value: parseFloat(ex.value) }); });
+    const ex = $('expoSlider'); ex.value = s.get('exposure'); $('expoV').textContent = Number(s.get('exposure')).toFixed(1);
+    ex.addEventListener('input', () => { $('expoV').textContent = (ex.value > 0 ? '+' : '') + Number(ex.value).toFixed(1); this.emit('setting', { key: 'exposure', value: parseFloat(ex.value) }); });
+    ex.addEventListener('dblclick', () => { ex.value = 0; ex.dispatchEvent(new Event('input')); });
+    const dev = $('ctlDevice'); dev.value = s.get('deviceName');
+    dev.addEventListener('change', () => this.emit('setting', { key: 'deviceName', value: dev.value.trim() || 'iPhone' }));
+    dev.addEventListener('keydown', (ev) => ev.stopPropagation());
     const th = $('ctlThreshold'); th.value = s.get('autoThreshold'); $('ctlThresholdV').textContent = th.value;
     th.addEventListener('input', () => { $('ctlThresholdV').textContent = th.value; this.emit('setting', { key: 'autoThreshold', value: parseInt(th.value, 10) }); });
     const hold = $('ctlHold'); hold.value = (s.get('holdMs') / 1000).toFixed(2); $('ctlHoldV').textContent = `${(s.get('holdMs') / 1000).toFixed(1)}s`;
@@ -77,7 +84,7 @@ export class Controls extends Emitter {
     const up = (ev) => { const p = this.tapStart; this.pointers.delete(ev.pointerId); if (this.pointers.size < 2) this.pinchStart = null; if (p && this.pointers.size === 0 && performance.now() - p.t < 350 && Math.hypot(ev.clientX - p.x, ev.clientY - p.y) < 10) { const r = e.viewport.getBoundingClientRect(); this.emit('focus', { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height, px: ev.clientX - r.left, py: ev.clientY - r.top }); } this.tapStart = null; };
     e.viewport.addEventListener('pointerup', up); e.viewport.addEventListener('pointercancel', up);
     // Close the panel when tapping the preview.
-    e.viewport.addEventListener('pointerdown', () => { if (e.panel.classList.contains('open')) this.togglePanel(false); });
+    e.viewport.addEventListener('pointerdown', () => { if (e.panel.classList.contains('open')) this.togglePanel(false); this.closePopovers(); });
     document.addEventListener('keydown', (ev) => { if ((ev.key === ' ' || ev.key === 'Enter') && document.activeElement === document.body && $('review').hidden) { ev.preventDefault(); this.emit('shutter'); } });
   }
 
@@ -88,13 +95,19 @@ export class Controls extends Emitter {
   }
 
   // ---------- Rendering helpers ----------
+  closePopovers() { this.el.expoPop.hidden = true; this.el.btnExposure.setAttribute('aria-expanded', 'false'); }
+  /** Status line under the viewfinder. tone: gray | yellow | green */
+  setStatus(text, tone = 'gray') { const l = this.el.statusLine; if (l.textContent !== text) l.textContent = text || ''; l.dataset.tone = tone; }
+  /** ✦ button: idle (sparkle) | active (✕ cancel) | ready (↻ rescan) */
+  setScan(state) { this.el.btnScan.dataset.state = state; this.el.btnScan.setAttribute('aria-label', state === 'active' ? 'Cancel' : state === 'ready' ? 'Scan again' : 'Find the shot'); }
+  syncTopIcons({ grid, horizon }) { this.el.btnGrid.setAttribute('aria-pressed', String(grid !== 'off')); this.el.btnLevel.setAttribute('aria-pressed', String(!!horizon)); }
   setMode(mode) { for (const b of this.el.modes.querySelectorAll('.mode')) b.setAttribute('aria-selected', String(b.dataset.mode === mode)); this.el.app.dataset.mode = mode; }
   setFlash(state, supported) { this.el.btnFlash.dataset.state = state; this.el.flashBadge.textContent = state === 'auto' ? 'A' : state === 'on' ? 'ON' : ''; this.el.btnFlash.style.opacity = supported ? '1' : '0.45'; this.el.btnFlash.title = supported ? 'Flash' : 'Flash not available on this camera'; }
   setTimer(sec) { this.el.timerBadge.textContent = sec ? `${sec}s` : ''; this.el.btnTimer.dataset.state = sec ? 'on' : 'off'; }
   setAI({ enabled, busy, thermal }) { this.el.btnAI.setAttribute('aria-pressed', String(enabled)); this.el.btnAI.dataset.busy = String(!!busy); this.el.btnAI.dataset.thermal = thermal || 'nominal'; this.el.aiLabel.textContent = !enabled ? 'AI OFF' : busy ? 'LOADING' : 'ON-DEVICE'; }
   setZoomPresets(presets, current, recommended) {
     const c = this.el.zoomChips; c.innerHTML = '';
-    for (const p of presets) { const b = document.createElement('button'); b.className = 'zoom-chip'; b.dataset.factor = p.factor; b.textContent = `${p.factor}×`; b.title = p.optical ? 'Optical' : 'Digital'; if (!p.optical) b.style.fontStyle = 'italic'; c.appendChild(b); }
+    for (const p of presets) { const b = document.createElement('button'); b.className = 'zoom-chip'; b.dataset.factor = p.factor; b.textContent = p.factor < 1 ? `.${String(p.factor).split('.')[1]}x` : `${p.factor}x`; b.title = p.optical ? 'Optical' : 'Digital'; if (!p.optical) b.style.fontStyle = 'italic'; c.appendChild(b); }
     this.el.zoomSlider.min = Math.min(...presets.map((p) => p.factor), 1); this.el.zoomSlider.max = ZOOM.maxDigital;
     this.setZoom(current, recommended);
   }

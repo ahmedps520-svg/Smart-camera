@@ -4,7 +4,7 @@
  * No network requests are made for analysis at any time; the only fetches are
  * for the app's own static files.
  */
-const VERSION = 'smart-camera-v1.3.0';
+const VERSION = 'smart-camera-v1.4.0';
 const SHELL_CACHE = `${VERSION}-shell`;
 // Models only change when this name changes, so app updates never re-download ~25 MB.
 const MODEL_CACHE = 'smart-camera-models-v1';
@@ -31,6 +31,10 @@ const SHELL = [
   './js/vision/ViewTransform.js',
   './js/render/LookRenderer.js',
   './js/render/AutoEnhance.js',
+  './js/render/Frames.js',
+  './js/ai/ShotFinder.js',
+  './js/ai/TemplateTracker.js',
+  './js/ai/Candidates.js',
   './js/analysis/Expressions.js',
   './js/capture/Triggers.js',
   './js/capture/BurstSelector.js',

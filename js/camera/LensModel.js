@@ -53,7 +53,8 @@ export class LensModel {
     for (const f of ZOOM.presets) {
       if (f < 1) { if (this.minZoom <= f) out.push({ factor: f, optical: true }); continue; }
       if (f === 1) { out.push({ factor: 1, optical: true }); continue; }
-      if (this.hardware) { if (this.hardware.max >= f) out.push({ factor: f, optical: this.hasTelephoto && f >= 2 }); }
+      // Pro iPhones: .5 / 1 / 2 / 5 (3× is only offered when there is no 5× reach).
+      if (this.hardware) { if (this.hardware.max >= f && !(f === 3 && this.hardware.max >= 5)) out.push({ factor: f, optical: this.hasTelephoto && f >= 2 }); }
       else if (f <= 3) out.push({ factor: f, optical: false });
     }
     return this.facing === 'user' ? out.filter((p) => p.factor <= 2) : out;

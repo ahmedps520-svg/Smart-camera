@@ -152,7 +152,12 @@ export const LOOK_DEFAULTS = {
 };
 
 export const FILTERS = [
-  { id: 'natural', name: 'Natural', params: {}, css: 'none' },
+  { id: 'natural', name: 'Original', params: {}, css: 'none' },
+  // Film looks (shown first in the editor).
+  { id: 'clean', name: 'Clean', params: { brightness: 1.06, contrast: 0.94, saturation: 0.9, temperature: -0.08, fade: 0.03, lift: 0.05, highlights: [0.01, 0.015, 0.025] }, css: 'brightness(1.07) contrast(0.94) saturate(0.9)' },
+  { id: 'harbor', name: 'Harbor', params: { temperature: -0.32, tint: -0.04, saturation: 0.78, contrast: 1.1, curve: 0.28, shadows: [-0.03, 0.045, 0.085], highlights: [0.02, 0.03, 0.02], fade: 0.05, vignette: 0.28 }, css: 'saturate(0.8) contrast(1.12) hue-rotate(-10deg) brightness(0.98)' },
+  { id: 'dusk', name: 'Dusk', params: { temperature: 0.35, tint: 0.1, saturation: 1.15, curve: 0.22, shadows: [0.06, -0.01, 0.085], highlights: [0.085, 0.03, -0.035], fade: 0.06, vignette: 0.32 }, css: 'sepia(0.3) saturate(1.3) hue-rotate(-12deg) contrast(1.05)' },
+  { id: 'relic', name: 'Relic', params: { temperature: 0.25, saturation: 0.62, contrast: 0.9, fade: 0.14, grain: 0.07, vignette: 0.45, curve: 0.1, shadows: [0.04, 0.02, -0.02], highlights: [0.04, 0.02, -0.045] }, css: 'sepia(0.45) saturate(0.7) contrast(0.88) brightness(1.04)' },
   { id: 'warm', name: 'Warm', params: { temperature: 0.4, tint: 0.04, saturation: 1.2, contrast: 1.06, brightness: 1.03 }, css: 'sepia(0.35) saturate(1.4) brightness(1.04)' },
   { id: 'cool', name: 'Cool', params: { temperature: -0.45, tint: -0.02, saturation: 1.05, contrast: 1.08, highlights: [-0.02, 0.01, 0.05] }, css: 'saturate(1.1) hue-rotate(-12deg) brightness(1.03) contrast(1.08)' },
   { id: 'cinematic', name: 'Cinematic', params: { curve: 0.5, saturation: 0.75, temperature: 0.05, shadows: [-0.05, 0.05, 0.1], highlights: [0.1, 0.04, -0.06], fade: 0.05, vignette: 0.6 }, css: 'contrast(1.3) saturate(0.75) sepia(0.2)' },
@@ -170,9 +175,9 @@ export const SCENES = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  mode: 'smart',             // photo | smart | pose
+  mode: 'photo',             // photo (✦ Find the shot) | smart | pose | portrait
   aiEnabled: true,
-  grid: 'off',               // off | thirds | golden | center
+  grid: 'thirds',            // off | thirds | golden | center
   histogram: false,
   zebra: false,              // highlight-clipping stripes
   handTrigger: true,         // raise a hand → 3 s timer
@@ -188,7 +193,9 @@ export const DEFAULT_SETTINGS = {
   flash: 'off',              // off | on | auto
   timer: 0,                  // 0 | 3 | 10
   filterStrength: 1,         // 0 … 1.5
-  aspect: 'full',            // full | 4:3 | 16:9
+  aspect: '4:3',             // full | 4:3 | 16:9
+  deviceName: 'iPhone 18 Pro', // printed on the Specs frame
+  frame: 'none',             // default frame style in the editor
   exposure: 0,
   filter: 'natural',
   rate: 'auto',

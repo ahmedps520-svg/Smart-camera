@@ -12,7 +12,7 @@ import { FILTERS, LOOK_DEFAULTS } from '../config/defaults.js';
 const NUM_KEYS = ['brightness', 'temperature', 'tint', 'contrast', 'curve', 'saturation', 'fade', 'lift', 'vignette', 'grain'];
 
 /** Editor adjustments (all neutral by default). */
-export const ADJUST_DEFAULTS = { light: 0, contrast: 0, warmth: 0, saturation: 0, vignette: 0 };
+export const ADJUST_DEFAULTS = { light: 0, contrast: 0, warmth: 0, saturation: 0, vignette: 0, ev: 0 };
 
 /**
  * Final shader parameters: the look blended toward neutral by `strength`
@@ -27,7 +27,7 @@ export function composeParams(lookId = 'natural', strength = 1, adjust = null) {
   p.highlights = look.highlights.map((v) => v * strength);
   if (adjust) {
     const a = { ...ADJUST_DEFAULTS, ...adjust };
-    p.brightness *= 1 + a.light * 0.45;
+    p.brightness *= (1 + a.light * 0.45) * Math.pow(2, a.ev * 0.5);   // ev: software exposure compensation
     p.lift += Math.max(0, a.light) * 0.08;
     p.contrast *= 1 + a.contrast * 0.4;
     p.temperature += a.warmth * 0.45;

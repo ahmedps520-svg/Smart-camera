@@ -22,11 +22,15 @@ import { PhotographyReasoner } from './reasoning/PhotographyReasoner.js';
 import { AutoCaptureController } from './capture/AutoCaptureController.js';
 import { PhotoProcessor } from './capture/PhotoProcessor.js';
 import { PhotoLibrary } from './library/PhotoLibrary.js';
-import { LookRenderer, composeParams, cssFallback, downscale, blurBackgroundWidth, maskToCanvas } from './render/LookRenderer.js';
+import { LookRenderer, composeParams, cssFallback, downscale, blurBackgroundWidth, maskToCanvas, renderStill } from './render/LookRenderer.js';
 import { summarizeExpressions, minEyesOpen, expressionNear } from './analysis/Expressions.js';
 import { HoldTrigger, handRaised, isSmiling } from './capture/Triggers.js';
 import { BurstSelector, sharpness } from './capture/BurstSelector.js';
 import { HistogramView } from './ui/Histogram.js';
+import { ShotFinder } from './ai/ShotFinder.js';
+import { TemplateTracker, toGray } from './ai/TemplateTracker.js';
+import { objectCandidates, peopleCandidates, saliencyCandidate } from './ai/Candidates.js';
+import { focalLength } from './render/Frames.js';
 import { Overlay } from './ui/Overlay.js';
 import { Controls } from './ui/Controls.js';
 import { ReviewView } from './ui/ReviewView.js';
@@ -67,7 +71,7 @@ class SmartCameraApp {
     this.sounds = new Sounds();
     this.controls = new Controls(this.settings);
     this.overlay = new Overlay($('overlay'), this.video);
-    this.review = new ReviewView(this.library, this.toast);
+    this.review = new ReviewView(this.library, this.toast, this.settings);
     this.libraryView = new LibraryView(this.library);
     this.previewCanvas = $('preview');
     this.renderer = new LookRenderer(this.previewCanvas);
@@ -79,6 +83,18 @@ class SmartCameraApp {
     this.smileTrigger = new HoldTrigger({ holdMs: 350, cooldownMs: 4000 });
     this.portraitReady = false; this.expressionsReady = false; this.maskCoverage = 0; this.expressions = [];
     this.bursting = false;
+    // ✦ Find the shot
+    this.finder = new ShotFinder();
+    this.tTracker = new TemplateTracker();
+    this._acquire = null;
+    this.finder.on('acquire', ({ box }) => { this._acquire = { box, at: 0 }; Haptics.tap(); });
+    this.finder.on('zoom', ({ zoom, from }) => {
+      const pred = this.tTracker.zoomBy(zoom / from);
+      this.setZoom(zoom, false);
+      if (pred) this._acquire = { box: pred, at: performance.now() + 450 };
+    });
+    this.finder.on('capture', ({ label }) => { this.endFinderUI(); this.capture({ auto: true, trigger: 'ai', subject: label }); });
+    this.finder.on('end', () => this.endFinderUI());
     this.fps = { frames: 0, last: performance.now(), value: 0 };
   }
 
@@ -141,9 +157,10 @@ class SmartCameraApp {
 
   async loadVision() {
     this.controls.setAI({ enabled: this.settings.get('aiEnabled'), busy: true });
-    this.controls.setGuide({ code: 'LOAD', text: 'Loading on-device models', tone: 'neutral' });
+    this.controls.setStatus('Loading on-device AI…', 'gray');
     try {
-      await this.vision.load((msg) => this.controls.setGuide({ code: 'LOAD', text: msg, tone: 'neutral' }));
+      await this.vision.load(() => this.controls.setStatus('Loading on-device AI…', 'gray'));
+      this.controls.setStatus(this.idleStatus(), 'gray');
       this.visionReady = true;
       this.vision.on('analysis', (a) => this.onAnalysis(a));
       this.vision.on('error', () => {});
@@ -154,7 +171,7 @@ class SmartCameraApp {
     } catch (e) {
       console.error(e);
       this.controls.setAI({ enabled: false, busy: false });
-      this.controls.setGuide({ code: 'ERR', text: 'AI unavailable — camera still works', tone: 'bad' });
+      this.controls.setStatus('AI unavailable — the camera still works', 'gray');
       this.toast.show(`Could not load the vision models (${e.message}). Capture still works.`, 5000);
       this.settings.set('aiEnabled', false);
     }
@@ -200,6 +217,8 @@ class SmartCameraApp {
       }
     }
     this.overlay.resize();
+    const vb = this.viewport.getBoundingClientRect();
+    document.documentElement.style.setProperty('--vf-bottom', `${Math.round(vb.bottom)}px`);
     // Tell the overlay where the toolbars are so labels never sit underneath them.
     const vr = this.viewport.getBoundingClientRect();
     const tb = $('topbar').getBoundingClientRect(), bb = document.querySelector('.bottombar').getBoundingClientRect();
@@ -232,6 +251,8 @@ class SmartCameraApp {
       if (this.video.readyState >= 2 && this.video.videoWidth && !document.hidden) {
         const s = this.settings; const crop = this.viewCrop(); n++;
         if (s.get('histogram')) this.histogram.update(this.video, crop);
+        // With the AI idle (plain camera), still draw the grid and level guide.
+        if (!this.vision.running && n % 2 === 0) this.overlay.draw({ mode: 'photo', motion: this.motion.read(), now: performance.now() });
         if (this.renderer.ok) {
           // Portrait: blur fades in only when a person mask is available.
           const mask = this.vision.last.mask;
@@ -245,7 +266,7 @@ class SmartCameraApp {
               this.renderer.setBackground(bgCanvas); this._bgReady = true;
             }
           }
-          const ok = this.renderer.draw(this.video, { crop, mirror: this.camera.mirror, params: composeParams(s.get('filter'), s.get('filterStrength')), seed: (performance.now() % 1000) / 1000, depth: this.depthLive > 0.01 ? this.depthLive : 0, zebra: s.get('zebra') });
+          const ok = this.renderer.draw(this.video, { crop, mirror: this.camera.mirror, params: composeParams(s.get('filter'), s.get('filterStrength'), this.softwareEV() ? { ev: this.softwareEV() } : null), seed: (performance.now() % 1000) / 1000, depth: this.depthLive > 0.01 ? this.depthLive : 0, zebra: s.get('zebra') });
           if (!ok) { this.renderer.ok = false; $('app').classList.remove('gpu'); this.applyPreviewFallback(); }
         }
       }
@@ -266,6 +287,7 @@ class SmartCameraApp {
     c.on('shutter', () => this.capture({ auto: false }));
     c.on('burstStart', () => this.burstStart());
     c.on('burstEnd', () => this.burstEnd());
+    c.on('scan', () => this.toggleScan());
     c.on('flip', () => this.switchFacing(this.selfie ? 'environment' : 'user'));
     c.on('selfie', () => this.switchFacing(this.selfie ? 'environment' : 'user'));
     c.on('flash', (v) => { s.set('flash', v); Haptics.tap(); });
@@ -320,6 +342,9 @@ class SmartCameraApp {
     this.overlay.options.grid = s.get('grid'); this.overlay.options.horizon = s.get('horizon'); this.overlay.options.skeleton = s.get('skeleton');
     $('histogram').hidden = !s.get('histogram');
     c.setAperture(mode === 'portrait');
+    c.syncTopIcons({ grid: s.get('grid'), horizon: s.get('horizon') });
+    $('app').dataset.aspect = s.get('aspect');
+    if (!this.finder.active && (key === 'mode' || key === undefined)) c.setStatus(this.idleStatus(), 'gray');
     if (key === 'portraitBlur' || key === undefined) { $('apertureSlider').value = s.get('portraitBlur'); c.setApertureLabel(s.get('portraitBlur')); }
     if (key === 'grid' || key === undefined) $('ctlGrid').value = s.get('grid');
     this.syncOptionalStages();
@@ -328,7 +353,7 @@ class SmartCameraApp {
     this.vision.governor.setMode(s.get('rate'));
     if (key === 'aspect') { this.layoutViewport(); this.tracker.reset(); this.reasoner.reset(); this.photoReasoner.reset(); }
     if (key === 'mirrorFront' || key === undefined) { this.camera.mirror = this.camera.facing === 'user' && s.get('mirrorFront'); this.overlay.options.mirror = this.camera.mirror; if (this.camera.isRunning) this.camera.applyVideoTransform(); }
-    if (key === 'exposure' && this.camera.isRunning) this.camera.setExposureCompensation(s.get('exposure')).then((ok) => { if (!ok) this.toast.show('Exposure control is not available on this camera'); });
+    if (key === 'exposure' && this.camera.isRunning && this.camera.supportsExposure) this.camera.setExposureCompensation(s.get('exposure'));
     if (key === 'mode' || key === 'aiEnabled' || key === undefined) {
       this.reasoner.reset(); this.photoReasoner.reset(); this.autoCapture.setEnabled(mode === 'pose' && s.get('aiEnabled'));
       this.controls.setCountdown(null); this.controls.setArmed(false);
@@ -361,7 +386,7 @@ class SmartCameraApp {
   }
 
   syncVisionRunning() {
-    const want = this.visionReady && this.started && this.settings.get('aiEnabled') && this.settings.get('mode') !== 'photo' && !document.hidden && this.camera.isRunning;
+    const want = this.visionReady && this.started && this.settings.get('aiEnabled') && (this.settings.get('mode') !== 'photo' || this.finder.active) && !document.hidden && this.camera.isRunning;
     if (want) this.vision.start(); else this.vision.stop();
   }
 
@@ -413,6 +438,7 @@ class SmartCameraApp {
     const lighting = a.ran.lighting ? this.lighting.analyze(a.pixels, tracked.primary, motion.stability) : this.lighting.last;
     if (a.frame === 1 || a.ran.scene || a.ran.objects || a.frame % 6 === 0) this.state.scene = this.sceneClassifier.update({ sceneLabels: a.sceneLabels, objects: view.objects, tracked, lighting }).scene;
     const scene = this.state.scene;
+    if (this.finder.active) { this.state.lighting = lighting; this.state.scene = scene; this.runFinder({ a, view, tracked, lighting, scene, motion, now, selfie }); return; }
     const composition = this.composition.evaluate({ tracked, scene, motion, pixels: a.pixels, objects: view.objects, selfie });
     const pose = this.poseScorer.score(tracked.primary);
     const group = tracked.count > 1 ? this.groupAnalyzer.analyze(tracked) : null;
@@ -469,6 +495,96 @@ class SmartCameraApp {
     this.controls.setZoom(this.camera.zoom, zoomAdvice.action === 'ZOOM' ? zoomAdvice.zoom : null);
     if (this.state.filterRec && (a.frame === 1 || a.frame % 12 === 0)) this.controls.setFilter(s.get('filter'), this.state.filterRec.id);
     this.overlay.draw({ tracked, composition, motion, recommendation: rec, mode, aligned, holdProgress, now });
+  }
+
+  // ---------------------------------------------------------------- ✦ Find the shot
+  idleStatus() {
+    return { photo: 'Tap ✦ to scan a new scene', smart: 'Smart guide · tap ✦ to find the shot', pose: 'Smart Pose · auto capture', portrait: 'Portrait · tap ✦ to find the shot' }[this.settings.get('mode')] || '';
+  }
+
+  flashStatus(text, tone = 'gray', ms = 3200) {
+    clearTimeout(this._statusTimer);
+    this.controls.setStatus(text, tone);
+    this._statusTimer = setTimeout(() => { if (!this.finder.active) this.controls.setStatus(this.idleStatus(), 'gray'); }, ms);
+  }
+
+  toggleScan() {
+    if (this.finder.active) { this.finder.cancel(); return; }
+    if (this.capturing || this.bursting) return;
+    if (!this.visionReady) { this.flashStatus('AI is still loading…'); return; }
+    if (!this.settings.get('aiEnabled')) this.settings.set('aiEnabled', true);
+    clearTimeout(this._statusTimer);
+    this.tracker.reset(); this.tTracker.reset(); this._acquire = null;
+    this.finder.start(performance.now());
+    this.vision.boost = { objects: 2, lighting: 1, scene: 15 };
+    this.controls.setScan('active'); this.controls.setStatus('Finding your shot...', 'yellow');
+    $('finderText').hidden = false; const cnt = $('finderCount'); cnt.hidden = false; cnt.textContent = '3';
+    Haptics.tap();
+    this.syncVisionRunning();
+  }
+
+  endFinderUI() {
+    $('finderText').hidden = true; $('finderCount').hidden = true;
+    this.controls.setScan('idle');
+    this.vision.boost = {};
+    this.tTracker.reset(); this._acquire = null;
+    this.overlay.clear(); this.overlay.targetFilter.reset();
+    clearTimeout(this._statusTimer); this.controls.setStatus(this.idleStatus(), 'gray');
+    this.syncVisionRunning();
+  }
+
+  /** One analysed frame while Find the shot is active. */
+  runFinder({ a, view, tracked, lighting, scene, motion, now, selfie }) {
+    const f = this.finder;
+    const scanning = f.state === 'SCANNING';
+    this.vision.boost = { objects: scanning ? 2 : 5, lighting: 1, scene: 15 };
+    const gray = a.ran.lighting && a.pixels ? toGray(a.pixels) : null;
+    const cands = [...peopleCandidates(tracked, { selfie }), ...objectCandidates(view.objects)];
+    if (a.pixels && (scanning || f.target?.kind === 'light')) { const sal = saliencyCandidate(a.pixels, { scene }); if (sal) cands.push(sal); }
+    let track = null;
+    if (gray) {
+      if (this._acquire && now >= this._acquire.at) { this.tTracker.init(gray, this._acquire.box); this._acquire = null; }
+      if (this.tTracker.active) {
+        track = this.tTracker.update(gray);
+        // Re-anchor on a fresh detection of the same subject (fixes template drift).
+        const key = f.target?.key;
+        // Light targets (sunset glow) re-anchor on the saliency map every frame: soft gradients
+        // make template matching wander. Objects and people re-anchor on their detections.
+        if (key && track && (f.target.kind === 'light' || a.ran.objects || a.ran.pose)) {
+          const tc = { x: track.box.x + track.box.w / 2, y: track.box.y + track.box.h / 2 };
+          const same = cands.filter((c) => c.key === key).map((c) => ({ c, d: Math.hypot(c.box.x + c.box.w / 2 - tc.x, c.box.y + c.box.h / 2 - tc.y) })).sort((p, q) => p.d - q.d)[0];
+          if (same && same.d < (f.target.kind === 'light' ? 0.22 : 0.15)) { this.tTracker.init(gray, same.c.box); track = { box: same.c.box, confidence: 1, lost: false }; }
+        }
+      }
+    }
+    // People and groups: follow them with the pose tracker directly (robust on any texture).
+    if (f.target && (f.target.kind === 'person' || f.target.kind === 'group')) {
+      const tb = f.target.box, tc = { x: tb.x + tb.w / 2, y: tb.y + tb.h / 2 };
+      const same = cands.filter((c) => c.key === f.target.key).map((c) => ({ c, d: Math.hypot(c.box.x + c.box.w / 2 - tc.x, c.box.y + c.box.h / 2 - tc.y) })).sort((p, q) => p.d - q.d)[0];
+      if (same && same.d < 0.3) { track = { box: same.c.box, confidence: 1, lost: false }; if (gray) this.tTracker.init(gray, same.c.box); }
+    }
+    const vm = f.update({ candidates: cands, track, motion, zoom: { current: this.camera.zoom, presets: this.camera.lens.presets() }, lighting }, now);
+    this.renderFinder(vm, motion, now);
+  }
+
+  renderFinder(vm, motion, now) {
+    const c = this.controls;
+    if (vm.state === 'IDLE' || vm.state === 'CAPTURE') {
+      if (vm.message) this.flashStatus(vm.message, vm.tone === 'green' ? 'green' : 'gray');
+      return;
+    }
+    const scanning = vm.state === 'SCANNING';
+    $('finderText').hidden = !scanning;
+    const cnt = $('finderCount'); cnt.hidden = !scanning;
+    if (scanning && cnt.textContent !== String(vm.countdown)) { cnt.textContent = String(vm.countdown); cnt.classList.remove('tick'); void cnt.offsetWidth; cnt.classList.add('tick'); this.sounds.tick(); }
+    if (vm.state === 'READY' && this._lastFinderState !== 'READY') Haptics.success();
+    this._lastFinderState = vm.state;
+    c.setStatus(vm.message || '', vm.tone);
+    c.setScan(vm.state === 'READY' ? 'ready' : 'active');
+    c.setGuide(null); c.setScores(null, false); c.setScene(null, false); c.setTrigger(null);
+    c.setLevel(motion, this.settings.get('horizon'));
+    c.setZoom(this.camera.zoom, null);
+    this.overlay.draw({ finder: vm, motion, now, mode: 'finder' });
   }
 
   /**
@@ -553,8 +669,9 @@ class SmartCameraApp {
    * @param o.timer  seconds to count down (defaults to the timer setting for manual shots)
    * @param o.trigger 'pose' | 'hand' | 'smile' | null — recorded with the photo
    */
-  async capture({ auto, timer = null, trigger = null }) {
+  async capture({ auto, timer = null, trigger = null, subject = null }) {
     if (this.capturing || this.bursting || !this.camera.isRunning) return;
+    if (this.finder.active && trigger !== 'ai') this.finder.cancel('manual');
     this.capturing = true; this.controls.setBusy(true);
     try {
       const s = this.settings;
@@ -565,19 +682,41 @@ class SmartCameraApp {
       if (useTorch) { await this.camera.setTorch(true); await new Promise((r) => setTimeout(r, 350)); }
       this.sounds.shutter(); Haptics.shutter(); this.controls.flashScreen();
       const { w, h } = this.viewSize();
-      const shot = await this.camera.capture({ viewW: w, viewH: h, mirrorOutput: this.camera.mirror });
+      let shot = await this.camera.capture({ viewW: w, viewH: h, mirrorOutput: this.camera.mirror });
+      shot = await this.bakeExposure(shot);
       if (useTorch) this.camera.setTorch(false);
-      const record = await this.saveShot(shot, { auto, trigger: trigger || (auto ? 'pose' : null) });
+      const record = await this.saveShot(shot, { auto, trigger: trigger || (auto ? 'pose' : null), subject });
       this.autoCapture.markCaptured(performance.now());
       this.handTrigger.block(performance.now(), 2500); this.smileTrigger.block(performance.now());
       this.controls.setCountdown(null);
       const label = { hand: 'Captured ✋', smile: 'Captured 😊' }[trigger] || 'Captured';
-      if (auto) this.toast.show(label, 1400);
-      else { this.vision.stop(); await this.review.show(record, { recommendedFilter: record.meta.filter, initialFilter: record.meta.look, strength: record.meta.strength }); }
+      if (auto && trigger !== 'ai') this.toast.show(label, 1400);
+      else { this.vision.stop(); await this.review.show(record, { recommendedFilter: record.meta.filter, initialFilter: trigger === 'ai' ? record.meta.filter : record.meta.look, strength: record.meta.strength }); }
     } catch (e) {
       console.error(e); this.toast.show(`Capture failed: ${e.message}`, 3000);
       this.autoCapture.markCaptured(performance.now());
     } finally { this.capturing = false; this.controls.setBusy(false); }
+  }
+
+  /** Exposure time / ISO when the browser reports them (Chrome on Android does; Safari does not). */
+  exposureInfo() {
+    try {
+      const st = this.camera.track?.getSettings?.() || {};
+      const out = {};
+      if (typeof st.exposureTime === 'number' && st.exposureTime > 0) out.exposureTime = st.exposureTime / 10000;   // spec unit: 100 µs
+      if (typeof st.iso === 'number' && st.iso > 0) out.iso = st.iso;
+      return out;
+    } catch { return {}; }
+  }
+
+  /** Exposure compensation in software when the camera does not support it in hardware. */
+  softwareEV() { const ev = this.settings.get('exposure') || 0; return !this.camera.supportsExposure && Math.abs(ev) > 0.01 ? ev : 0; }
+
+  async bakeExposure(shot) {
+    const ev = this.softwareEV(); if (!ev) return shot;
+    const canvas = renderStill(shot.canvas, { adjust: { ev } });
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
+    return { blob, width: canvas.width, height: canvas.height, canvas };
   }
 
   /**
@@ -608,7 +747,8 @@ class SmartCameraApp {
       meta: {
         scene: this.state.scene, scores: this.state.scores, lighting: { advice: processed.lighting.advice, score: processed.lighting.score }, filter: processed.filter.id,
         look, strength, zoom: this.camera.zoom, mode: s.get('mode'), selfie: this.selfie, composition: this.state.composition?.type,
-        portrait: !!maskBlob, depth: maskBlob ? s.get('portraitBlur') : 0, depthDefault: maskBlob ? s.get('portraitBlur') : 0, ...extraMeta,
+        portrait: !!maskBlob, depth: maskBlob ? s.get('portraitBlur') : 0, depthDefault: maskBlob ? s.get('portraitBlur') : 0,
+        focal: focalLength({ zoom: this.camera.zoom, selfie: this.selfie }), ...this.exposureInfo(), takenAt: Date.now(), ...extraMeta,
       },
     });
     this.refreshThumb(await this.library.count(), record);

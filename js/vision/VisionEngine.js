@@ -56,13 +56,13 @@ export class VisionEngine extends Emitter {
   start() {
     if (this.running) return;
     this.running = true;
-    const loop = (now) => {
+    const loop = () => {
       if (!this.running) return;
-      this.tick(now);
+      this.tick();
       if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) this._raf = this.video.requestVideoFrameCallback(loop);
       else this._raf = requestAnimationFrame(loop);
     };
-    loop(performance.now());
+    loop();
   }
 
   stop() {
@@ -71,7 +71,10 @@ export class VisionEngine extends Emitter {
     cancelAnimationFrame(this._raf);
   }
 
-  tick(now) {
+  tick() {
+    // Always use the live page clock: video-frame callbacks can hand over stale
+    // timestamps (seconds old), which would break every timer downstream.
+    const now = performance.now();
     const v = this.video;
     if (!v.videoWidth || v.readyState < 2 || v.paused) return;
     const sched = this.governor.evaluate(now);

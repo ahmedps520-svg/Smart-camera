@@ -12,7 +12,10 @@ export class FilterRecommender {
     if (!lighting) return { id: 'natural', name: 'Natural', reason: 'Default', ranked: ['natural'] };
     const { warmth, saturation, mean, contrast, isNight, isDark } = lighting;
     if (isNight || (isDark && scene === 'night')) add('night', 3, 'Low light');
-    if (scene === 'sunset' || (warmth > 1.3 && mean < 0.55)) add('golden', 2.6, 'Warm, low sun');
+    if (scene === 'sunset' || (warmth > 1.3 && mean < 0.55)) add('dusk', 2.7, 'Warm, low sun');
+    if (scene === 'beach' || scene === 'food' || scene === 'product') add('clean', 2.4, 'Bright and airy');
+    if (scene === 'street' || scene === 'architecture' || (warmth < 0.95 && contrast > 0.18)) add('harbor', 2.15, 'Moody and cool');
+    if (scene === 'indoor' && saturation < 0.3) add('relic', 1.9, 'Soft vintage feel');
     if (scene === 'portrait') { add(saturation < 0.25 ? 'warm' : 'soft', 2.2, 'Flattering for skin'); add('natural', 2.0, 'Keep it true'); }
     if (scene === 'group') add('natural', 2.3, 'True colours for everyone');
     if (scene === 'landscape' || scene === 'beach') add(saturation < 0.3 ? 'vibrant' : 'natural', 2.2, 'Bring out the scenery');

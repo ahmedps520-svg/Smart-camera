@@ -1,8 +1,8 @@
 import { DEFAULT_SETTINGS } from '../config/defaults.js';
 import { Emitter } from '../util/events.js';
 
-// v2: auto-capture defaults changed; old saved thresholds are intentionally dropped.
-const KEY = 'smart-camera.settings.v2';
+// v3: new camera layout (3:4 viewfinder, grid on, ✦ Find the shot as the default mode).
+const KEY = 'smart-camera.settings.v3';
 
 /** Persistent user settings (localStorage). Emits 'change' with {key, value}. */
 export class Settings extends Emitter {

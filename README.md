@@ -7,6 +7,18 @@ Point your phone at a scene; local vision models understand it, the composition 
 
 > This repository was asked to be a website rather than a native Swift app. The original brief (native SwiftUI / Core ML / AVFoundation) is implemented here with the web equivalents: MediaPipe Tasks (WASM + WebGL) for Vision/Core ML, `getUserMedia` for AVFoundation, Canvas/CSS filters for Core Image, DeviceMotion for Core Motion and IndexedDB + the share sheet for PhotoKit. Browser limitations are listed honestly at the end.
 
+## ✦ Find the shot
+
+The default camera is calm: a 3:4 viewfinder with a grid, and one line of text underneath. Tap **✦** and the AI takes over:
+
+1. **"AI is finding the shot…" 3 · 2 · 1.** Pan around. Every frame, people, objects ("distant boat", "dog") and the most striking light ("sunset glow") are scored for interest. Things seen consistently during the scan win.
+2. **Yellow box on the winner**, with its label, a centre crosshair and a dotted line to it, plus one instruction under the viewfinder: *Move your phone left*. The subject is followed by template tracking, re-anchored on fresh detections, so tiny far-away subjects are not lost.
+3. **"Centered — framing up…"** then **"Framing your shot…"**: the lens/zoom that frames the subject best is selected automatically, for example 2× for a distant boat.
+4. **Green label, "beautiful light, hold the focus."** Hold steady and the photo is taken by itself.
+5. **Editor:** film looks (Original, Clean, Harbor, Dusk, Relic and more) rendered from your photo, frames (Original, White, Paper, **Specs** "Shot on iPhone 18 Pro" with the focal length, **Date** stamp), Adjust, delete and **✓ Save**.
+
+✕ cancels at any time, and ↻ scans again. Smart guide, Smart Pose and Portrait are in the ••• menu.
+
 ## What it does
 
 | Area | Implementation |
@@ -69,8 +81,12 @@ js/
 ├── camera/   CameraController  getUserMedia, zoom (hardware + digital), torch, exposure, focus, capture
 │             LensModel         which presets the device really supports
 ├── motion/   MotionSensor      roll / pitch / level / stability from DeviceMotion
+├── ai/       ShotFinder        ✦ Find the shot: scan → guide → frame → capture
+│             Candidates        people / objects / light → labelled, scored subjects
+│             TemplateTracker   follows the chosen subject between frames (NCC)
 ├── render/   LookRenderer      GPU/CPU colour + depth pipeline: preview, viewer, thumbnails, export
 │             AutoEnhance       one-tap enhance from the photo's histogram
+│             Frames            White / Paper / Specs / Date frames
 ├── vision/   MediaPipeBackend  pose, face, objects, scene — swap for any backend with the same 4 methods
 │             VisionEngine      adaptive per-stage schedule, isolation of failing stages
 │             FrameSampler      small ImageData of the visible area for pixel statistics
@@ -126,7 +142,7 @@ video frame ─▶ VisionEngine (pose · face · objects · scene · pixels)
 ## Tests
 
 ```bash
-npm test          # node --test tests/*.test.js — 58 unit tests over the pure logic modules
+npm test          # node --test tests/*.test.js — 66 unit tests over the pure logic modules
 ```
 
 Browser verification during development used headless Chromium with a fake camera fed by real test images (person, portrait, food, animals): models load from the vendored files, a person is detected and tracked, guidance and the composition box appear, the scene classifier maps labels (cheeseburger → food, cats/dogs → pet, seashore → beach), the shutter saves a full-resolution JPEG to the library with post-capture analysis, and Smart Pose auto-captures after the hold window and countdown.

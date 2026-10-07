@@ -37,7 +37,7 @@ test('zoom advisor is quiet when the subject size is within tolerance', () => {
 test('lens model exposes presets only when supported', () => {
   const lm = new LensModel();
   lm.update({ devices: [{ kind: 'videoinput', label: 'Back Camera' }, { kind: 'videoinput', label: 'Back Ultra Wide Camera' }, { kind: 'videoinput', label: 'Back Telephoto Camera' }], facing: 'environment', capabilities: { zoom: { min: 1, max: 15, step: 0.1 } } });
-  assert.deepEqual(lm.presets().map((p) => p.factor), [0.5, 1, 2, 3, 5]);
+  assert.deepEqual(lm.presets().map((p) => p.factor), [0.5, 1, 2, 5]);   // like the Camera app on Pro iPhones
   assert.ok(lm.presets().find((p) => p.factor === 5).optical);
   const basic = new LensModel();
   basic.update({ devices: [{ kind: 'videoinput', label: 'Front Camera' }], facing: 'user', capabilities: {} });
@@ -77,7 +77,7 @@ test('lighting analyzer flags dark, bright and backlit frames', () => {
 test('filter recommender follows scene and light', () => {
   const fr = new FilterRecommender();
   assert.equal(fr.recommend({ lighting: { isNight: true, isDark: true, warmth: 1, saturation: 0.3, mean: 0.1, contrast: 0.2 }, scene: 'night' }).id, 'night');
-  assert.equal(fr.recommend({ lighting: { isNight: false, isDark: false, warmth: 1.5, saturation: 0.4, mean: 0.4, contrast: 0.2 }, scene: 'sunset' }).id, 'golden');
+  assert.equal(fr.recommend({ lighting: { isNight: false, isDark: false, warmth: 1.5, saturation: 0.4, mean: 0.4, contrast: 0.2 }, scene: 'sunset' }).id, 'dusk');
   assert.equal(fr.recommend({ lighting: { isNight: false, isDark: false, warmth: 1.0, saturation: 0.08, mean: 0.5, contrast: 0.25 }, scene: 'street' }).id, 'bw');
   assert.equal(fr.recommend({ lighting: null }).id, 'natural');
 });
