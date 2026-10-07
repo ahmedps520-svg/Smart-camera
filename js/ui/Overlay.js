@@ -170,54 +170,58 @@ export class Overlay {
     ctx.restore();
   }
 
-  /** Composition grids: rule of thirds, golden ratio (phi grid) or a centre cross. */
   /**
-   * "Find the shot" overlay (reference design): yellow rounded box on the chosen
-   * subject with its label, a centre crosshair and a dotted line to the subject;
-   * once ready, a green crosshair and a green label chip on the subject.
+   * "Find the shot" overlay: the AI's framing as a yellow box glued to the
+   * scene, a line with an arrowhead from the centre of the screen to it, and a
+   * centre crosshair. Green once it is lined up.
    */
   drawFinder(vm, m, now) {
-    const ctx = this.ctx, Y = '#FFD60A', G = '#30D158';
-    if (!vm?.target) { this.targetFilter.reset(); return; }
-    const t = vm.target;
-    const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
-    const bw = Math.max(t.w * 1.6, 0.22), bh = Math.max(t.h * 1.6, 0.2);
-    const r0 = m.box({ x: cx - bw / 2, y: cy - bh / 2, w: bw, h: bh });
-    // Keep the box on screen even for subjects that fill the frame.
-    const x0 = Math.max(4, r0.x), y0 = Math.max(4, r0.y), x1 = Math.min(this.w - 4, r0.x + r0.w), y1 = Math.min(this.h - 22, r0.y + r0.h);
-    const b = this.targetFilter.push({ x: x0, y: y0, w: Math.max(20, x1 - x0), h: Math.max(20, y1 - y0) }, now);
-    const px = b.x + b.w / 2, py = b.y + b.h / 2;
-    const vx = this.w / 2, vy = this.h / 2;
+    const ctx = this.ctx;
+    if (!vm?.box) { this.targetFilter.reset(); return; }
+    const col = vm.aligned ? '#30D158' : '#FFD60A';
+    const raw = m.box(vm.box);
+    const b = this.targetFilter.push(raw, now);
+    const vx = this.w / 2, vy = this.h / 2, px = b.x + b.w / 2, py = b.y + b.h / 2;
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 6;
-    const plus = (x, y, c, r = 7) => { ctx.strokeStyle = c; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke(); };
-    ctx.font = '600 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif';
-    if (vm.state === 'READY') {
-      plus(px, py, G, 8);
-      const label = `• ${vm.label}`;
-      const tw = ctx.measureText(label).width + 16, lx = Math.min(this.w - tw - 6, Math.max(6, px - tw / 2)), ly = Math.min(this.h - 30, py + 0.5 * b.h * 0.6);
-      ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(lx, ly, tw, 22, 6) : ctx.rect(lx, ly, tw, 22); ctx.fill();
-      ctx.fillStyle = G; ctx.textBaseline = 'middle'; ctx.fillText(label, lx + 8, ly + 11.5);
-      ctx.restore();
-      return;
+    ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 6;
+    // Box (clipped to the screen so a box partly off-screen still reads as a box).
+    ctx.strokeStyle = col; ctx.lineWidth = 3;
+    const x0 = Math.max(3, b.x), y0 = Math.max(3, b.y), x1 = Math.min(this.w - 3, b.x + b.w), y1 = Math.min(this.h - 3, b.y + b.h);
+    if (x1 > x0 + 10 && y1 > y0 + 10) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x0, y0, x1 - x0, y1 - y0, 14) : ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.stroke(); }
+    // Line from the centre of the screen toward the box, with an arrowhead.
+    const d = Math.hypot(px - vx, py - vy);
+    if (d > 24 && !vm.aligned) {
+      const ang = Math.atan2(py - vy, px - vx);
+      const ex = vx + Math.cos(ang) * (d - 10), ey = vy + Math.sin(ang) * (d - 10);
+      ctx.strokeStyle = col; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.setLineDash([7, 6]);
+      ctx.beginPath(); ctx.moveTo(vx, vy); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = col; ctx.beginPath();
+      ctx.moveTo(ex + Math.cos(ang) * 10, ey + Math.sin(ang) * 10);
+      ctx.lineTo(ex + Math.cos(ang + 2.5) * 12, ey + Math.sin(ang + 2.5) * 12);
+      ctx.lineTo(ex + Math.cos(ang - 2.5) * 12, ey + Math.sin(ang - 2.5) * 12);
+      ctx.closePath(); ctx.fill();
     }
-    // Dotted line from the centre of the frame to the subject.
-    if (Math.hypot(px - vx, py - vy) > 18) {
-      ctx.strokeStyle = 'rgba(255,214,10,0.85)'; ctx.lineWidth = 1.6; ctx.setLineDash([2, 5]); ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(vx, vy); ctx.lineTo(px, py); ctx.stroke(); ctx.setLineDash([]);
+    // Crosshairs: screen centre and box centre.
+    const plus = (x, y, r) => { ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke(); };
+    plus(vx, vy, 8);
+    if (px > 0 && px < this.w && py > 0 && py < this.h) plus(px, py, 6);
+    // Label under (or inside) the box.
+    if (vm.label) {
+      ctx.font = '600 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif'; ctx.textBaseline = 'top';
+      const tw = ctx.measureText(vm.label).width;
+      const lx = Math.min(this.w - tw - 8, Math.max(8, x0 + 4));
+      const ly = y1 + 6 + 16 < this.h ? y1 + 6 : y0 + 8;
+      ctx.fillStyle = col; ctx.fillText(vm.label, lx, ly);
     }
-    plus(vx, vy, Y, 7);
-    // Yellow rounded box on the subject.
-    ctx.strokeStyle = Y; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(b.x, b.y, b.w, b.h, 12) : ctx.rect(b.x, b.y, b.w, b.h); ctx.stroke();
-    // Label under the box.
-    ctx.fillStyle = Y; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-    const lx = Math.min(this.w - ctx.measureText(vm.label).width - 6, Math.max(6, b.x - 4));
-    ctx.fillText(vm.label, lx, Math.min(this.h - 18, b.y + b.h + 6));
+    // Time left before the AI takes the shot anyway: a thin bar along the box's top edge.
+    if (vm.progress > 0 && !vm.aligned && x1 > x0 + 10) {
+      ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(255,214,10,0.55)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x0 + 14, y0 - 6); ctx.lineTo(x0 + 14 + (x1 - x0 - 28) * (1 - vm.progress), y0 - 6); ctx.stroke();
+    }
     ctx.restore();
   }
 
+  /** Composition grids: rule of thirds, golden ratio (phi grid) or a centre cross. */
   drawGrid(ctx, type = 'thirds') {
     ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.24)'; ctx.lineWidth = 0.8;
     const line = (x0, y0, x1, y1) => { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); };

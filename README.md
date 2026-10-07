@@ -9,15 +9,15 @@ Point your phone at a scene; local vision models understand it, the composition 
 
 ## ✦ Find the shot
 
-The default camera is calm: a 3:4 viewfinder with a grid, and one line of text underneath. Tap **✦** and the AI takes over:
+The default camera is calm: a 3:4 viewfinder with a grid, and one line of text underneath. Tap **✦** and the AI frames the shot for you in about a second:
 
-1. **"AI is finding the shot…" 3 · 2 · 1.** Pan around. Every frame, people, objects ("distant boat", "dog") and the most striking light ("sunset glow") are scored for interest. Things seen consistently during the scan win.
-2. **Yellow box on the winner**, with its label, a centre crosshair and a dotted line to it, plus one instruction under the viewfinder: *Move your phone left*. The subject is followed by template tracking, re-anchored on fresh detections, so tiny far-away subjects are not lost.
-3. **"Centered — framing up…"** then **"Framing your shot…"**: the lens/zoom that frames the subject best is selected automatically, for example 2× for a distant boat.
-4. **Green label, "beautiful light, hold the focus."** Hold steady and the photo is taken by itself.
-5. **Editor:** film looks (Original, Clean, Harbor, Dusk, Relic and more) rendered from your photo, frames (Original, White, Paper, **Specs** "Shot on iPhone 18 Pro" with the focal length, **Date** stamp), Adjust, delete and **✓ Save**.
+1. **It analyses the frame you tapped on, once.** People, objects ("distant boat", "dog") and the most striking light ("sunset glow") are scored, and the best photo inside the current view is planned for the selected style. Nothing keeps re-detecting and moving afterwards.
+2. **A yellow box appears where the photo should be,** with a dashed line and arrowhead from the centre of the screen to it, its label, and one short instruction: *Move your phone left to the box*. The box is the photo you will get, and it stays pinned to that spot in the scene: as you move the phone, it slides toward the centre (the scene motion is measured from the camera image, so it doesn't jump around).
+3. **Box centred → it turns green, the camera zooms** to the style's zoom (e.g. 1.8× tighter for Cinematic, or out to the widest lens for Scenic) **and the photo is taken by itself.**
+4. **No 2-minute hunts:** if you don't line it up within 4 seconds (the thin bar on the box is the time left), it takes the photo anyway and crops it to the box.
+5. **Editor:** film looks (Original, Clean, Harbor, Dusk, Relic and more) rendered from your photo, frames (Original, White, Paper, **Specs** "Shot on iPhone 18 Pro" with the focal length, **Date** stamp, **Cinema**), Adjust, delete and **✓ Save**.
 
-✕ cancels at any time, and ↻ scans again. Smart guide, Smart Pose and Portrait are in the ••• menu.
+✕ cancels at any time. Smart guide, Smart Pose and Portrait are in the ••• menu.
 
 ### AI styles
 
@@ -25,15 +25,15 @@ Pick a style in the row above the shutter, or swipe left/right on the viewfinder
 
 | Style | What it does |
 | --- | --- |
-| **Standard** | Balanced: 3 s scan, subject centred, optical lens choice, the AI's recommended look |
-| **Daily** | Quick and natural: 1.5 s scan, little zoom (≤2×), looser centring, shoots fast, no filter |
-| **Cinematic** | Zooms in ~1.8× tighter with smooth continuous zoom, subject on a third, faces steered into a live 2.39:1 widescreen guide, slower steadier capture, Cinematic look and a **Cinema** letterbox frame |
-| **Snapchat** | Full-screen vertical, strongly prefers people, steers by the face (upper band of the frame), frames close, shoots fast, punchy **Pop** look |
-| **Scenic** | Prefers the light and the view, goes to the widest lens, waits for a level horizon, Vibrant look |
-| **Street** | The decisive moment: fast scan and capture, subject on a third, ≤2×, B&W look |
+| **Standard** | Balanced: subject centred, optical lens choice, the AI's recommended look |
+| **Daily** | Quick and natural: little zoom (≤2×), no filter |
+| **Cinematic** | Zooms in ~1.8× tighter with smooth continuous zoom, subject on a third, faces placed in a live 2.39:1 widescreen guide, Cinematic look and a **Cinema** letterbox frame |
+| **Snapchat** | Full-screen vertical, strongly prefers people, face in the upper band of the frame, frames close, punchy **Pop** look |
+| **Scenic** | Prefers the light and the view, goes to the widest lens, Vibrant look |
+| **Street** | The decisive moment: subject on a third, ≤2×, B&W look |
 | **Film** | Subject on a third, Relic film look with the orange **Date** stamp |
 
-Styles are data (`AI_STYLES` in `js/config/defaults.js`), so new ones can be added without touching the logic. Before a large zoom the finder centres more precisely, so the subject is still framed after zooming.
+Styles are data (`AI_STYLES` in `js/config/defaults.js`), so new ones can be added without touching the logic.
 
 ## What it does
 
@@ -97,9 +97,10 @@ js/
 ├── camera/   CameraController  getUserMedia, zoom (hardware + digital), torch, exposure, focus, capture
 │             LensModel         which presets the device really supports
 ├── motion/   MotionSensor      roll / pitch / level / stability from DeviceMotion
-├── ai/       ShotFinder        ✦ Find the shot: scan → guide → frame → capture
+├── ai/       ShotFinder        ✦ Find the shot: plan one frame → box → zoom → capture
+│             GlobalMotion      keeps the box pinned to the scene as the phone moves
 │             Candidates        people / objects / light → labelled, scored subjects
-│             TemplateTracker   follows the chosen subject between frames (NCC)
+│             TemplateTracker   greyscale helpers (and an NCC template tracker)
 ├── render/   LookRenderer      GPU/CPU colour + depth pipeline: preview, viewer, thumbnails, export
 │             AutoEnhance       one-tap enhance from the photo's histogram
 │             Frames            White / Paper / Specs / Date frames

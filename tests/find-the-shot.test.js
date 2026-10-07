@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { objectCandidates, saliencyCandidate, describe, peopleCandidates } from '../js/ai/Candidates.js';
 import { TemplateTracker, toGray } from '../js/ai/TemplateTracker.js';
-import { ShotFinder } from '../js/ai/ShotFinder.js';
+import { ShotFinder, planShot } from '../js/ai/ShotFinder.js';
+import { GlobalMotion } from '../js/ai/GlobalMotion.js';
+import { AI_STYLES } from '../js/config/defaults.js';
 import { focalLength, specsLine, dateStamp, FRAMES } from '../js/render/Frames.js';
 import { SubjectTracker } from '../js/analysis/SubjectTracker.js';
 import { makePose, makeImage } from './helpers.js';
@@ -49,55 +51,61 @@ test('template tracker follows a subject as the phone moves', () => {
   assert.equal(r.lost, false);
 });
 
-test('Find the shot: scan → guide → centre → zoom → ready → capture', () => {
+test('Find the shot: one frame → anchored box → line up → zoom → capture', () => {
   const f = new ShotFinder();
-  const ev = []; f.on('acquire', (e) => ev.push(`acquire:${e.label}`)); f.on('zoom', (e) => ev.push(`zoom:${e.zoom}`)); f.on('capture', (e) => ev.push(`capture:${e.label}`));
-  const boat = (x) => [{ key: 'obj:boat', label: 'distant boat', kind: 'vehicle', box: { x, y: 0.5, w: 0.06, h: 0.03 }, score: 0.6 }];
+  const ev = []; f.on('zoom', (e) => ev.push(`zoom:${e.zoom}`)); f.on('capture', (e) => ev.push(`capture:${e.label}:${e.crop ? 'crop' : 'zoomed'}`));
   const presets = [{ factor: 0.5 }, { factor: 1 }, { factor: 2 }, { factor: 5 }];
+  const boat = [{ key: 'obj:boat', label: 'distant boat', kind: 'vehicle', box: { x: 0.2, y: 0.5, w: 0.06, h: 0.03 }, score: 0.6 }];
   f.start(0);
-  let vm;
-  for (let t = 0; t < 3000; t += 100) { vm = f.update({ candidates: boat(0.2), zoom: { current: 1, presets } }, t); }
-  assert.equal(vm.countdown, 1); assert.equal(vm.message, 'Finding your shot...');
-  vm = f.update({ candidates: boat(0.2), zoom: { current: 1, presets } }, 3000);
-  assert.deepEqual(ev, ['acquire:distant boat']);
-  vm = f.update({ track: { box: { x: 0.2, y: 0.5, w: 0.06, h: 0.03 } }, zoom: { current: 1, presets } }, 3100);
-  assert.equal(vm.message, 'Move your phone left');
-  const at = (x) => ({ track: { box: { x, y: 0.485, w: 0.06, h: 0.03 } }, zoom: { current: 1, presets } });
-  vm = f.update(at(0.42), 3200); assert.equal(vm.message, 'Move your phone left', 'hysteresis keeps the instruction until well centred');
-  vm = f.update(at(0.47), 3300); assert.equal(vm.message, 'Centered — framing up...');
-  for (let t = 3400; t <= 4000; t += 100) vm = f.update(at(0.47), t);
-  assert.ok(ev.includes('zoom:2'), ev.join(','));   // like the reference: .5x/1x → 2x for a distant boat
-  assert.equal(vm.state, 'FRAMING');
-  for (let t = 4100; t <= 4900; t += 100) vm = f.update({ ...at(0.47), motion: { stability: 1 }, lighting: { code: 'LIGHT_GREAT' } }, t);
-  assert.equal(vm.state, 'READY'); assert.equal(vm.tone, 'green'); assert.equal(vm.message, 'beautiful light, hold the focus.');
-  for (let t = 5000; t <= 6500 && !ev.some((e) => e.startsWith('capture')); t += 100) f.update({ ...at(0.47), motion: { stability: 1 } }, t);
-  assert.ok(ev.includes('capture:distant boat')); assert.equal(f.state, 'IDLE');
+  let vm = f.update({ candidates: boat, fresh: false, zoom: { current: 1, presets } }, 50);
+  assert.equal(vm.state, 'PLAN', 'waits for a complete analysis frame');
+  vm = f.update({ candidates: boat, fresh: true, zoom: { current: 1, presets } }, 100);
+  assert.equal(vm.state, 'AIM'); assert.equal(vm.label, 'distant boat');
+  const box0 = { ...vm.box };
+  assert.ok(box0.x + box0.w / 2 < 0.4, 'box is around the boat, left of centre');
+  assert.match(vm.message, /left/);
+  // The phone pans left: the scene (and the box) shifts right. The box stays glued to the scene.
+  vm = f.update({ shift: { dx: 0.1, dy: 0, ok: true }, zoom: { current: 1, presets } }, 200);
+  assert.ok(Math.abs(vm.box.x - (box0.x + 0.1)) < 1e-9, 'box follows the scene, not the subject detector');
+  const toCentre = 0.5 - (vm.box.x + vm.box.w / 2);
+  vm = f.update({ shift: { dx: toCentre, dy: 0.5 - (vm.box.y + vm.box.h / 2), ok: true }, zoom: { current: 1, presets } }, 300);
+  assert.equal(vm.aligned, true);
+  f.update({ zoom: { current: 1, presets } }, 600);
+  assert.deepEqual(ev, ['zoom:2']);
+  f.update({ zoom: { current: 2, presets } }, 1100);
+  assert.deepEqual(ev, ['zoom:2', 'capture:distant boat:zoomed']); assert.equal(f.state, 'IDLE');
 });
 
-test('Find the shot gives up cleanly when the subject is lost or nothing is found', () => {
-  const f = new ShotFinder(); f.start(0);
-  for (let t = 0; t <= 3000; t += 100) f.update({ candidates: [] }, t);
-  assert.equal(f.state, 'IDLE');
-  const g = new ShotFinder(); g.start(0);
-  for (let t = 0; t <= 3000; t += 100) g.update({ candidates: [{ key: 'person', label: 'person', kind: 'person', box: { x: 0.4, y: 0.2, w: 0.2, h: 0.6 }, score: 0.9 }] }, t);
-  let msg = null; for (let t = 3100; t <= 6000; t += 100) { const vm = g.update({ track: { lost: true } }, t); if (vm.message) msg = vm.message; }
-  assert.equal(g.state, 'IDLE'); assert.match(msg, /Lost the person/);
+test('Find the shot never takes long: not lined up in time → shoot and crop to the box', () => {
+  const f = new ShotFinder(); let got = null; f.on('capture', (e) => { got = e; });
+  const person = [{ key: 'person', label: 'person', kind: 'person', box: { x: 0.65, y: 0.3, w: 0.15, h: 0.4 }, score: 0.9 }];
+  f.start(0); f.update({ candidates: person, fresh: true, zoom: { current: 1, presets: [{ factor: 1 }, { factor: 2 }] } }, 10);
+  for (let t = 100; t <= 4100; t += 100) f.update({ shift: { dx: 0, dy: 0, ok: true } }, t);
+  assert.ok(got && got.crop, 'captured with the box as crop'); assert.equal(got.label, 'person');
+  assert.ok(got.focusY > 0 && got.focusY < 1);
 });
 
-test('big subjects need less precise centring', () => {
-  const f = new ShotFinder(); f.start(0);
-  const person = { key: 'person', label: 'person up close', kind: 'person', box: { x: 0.05, y: 0.12, w: 0.9, h: 0.86 }, score: 0.9 };
-  for (let t = 0; t <= 3000; t += 100) f.update({ candidates: [person] }, t);
-  const vm = f.update({ track: { box: person.box }, zoom: { current: 1, presets: [{ factor: 1 }] } }, 3100);
-  assert.equal(vm.message, 'Centered — framing up...');
+test('nothing detected still gives a framing; Scenic widens first', () => {
+  const plan = planShot({ candidates: [], current: 1, presets: [{ factor: 1 }, { factor: 2 }] });
+  assert.equal(plan.label, 'best framing'); assert.ok(plan.box.w > 0.5);
+  const f = new ShotFinder(); const zooms = []; f.on('zoom', (e) => zooms.push(e.zoom));
+  f.start(0, AI_STYLES.find((s) => s.id === 'scenic'));
+  const vm = f.update({ candidates: [], fresh: true, zoom: { current: 1, presets: [{ factor: 0.5 }, { factor: 1 }] } }, 10);
+  assert.deepEqual(zooms, [0.5]); assert.equal(vm.message, 'Going wide...');
+  assert.equal(f.update({ candidates: [], fresh: true, zoom: { current: 0.5, presets: [{ factor: 0.5 }, { factor: 1 }] } }, 200).state, 'PLAN', 'waits for the wide lens');
+  assert.equal(f.update({ candidates: [], fresh: true, zoom: { current: 0.5, presets: [{ factor: 0.5 }, { factor: 1 }] } }, 600).state, 'AIM');
 });
 
-test('zoom choice: optical presets that keep the subject whole', () => {
-  const presets = [{ factor: 0.5 }, { factor: 1 }, { factor: 2 }, { factor: 3 }, { factor: 5 }];
-  assert.equal(ShotFinder.chooseZoom({ kind: 'person', box: { w: 0.2, h: 0.3 } }, 1, presets), 2);
-  assert.equal(ShotFinder.chooseZoom({ kind: 'person', box: { w: 0.5, h: 0.95 } }, 1, presets), 0.5);
-  assert.equal(ShotFinder.chooseZoom({ kind: 'light', box: { w: 0.2, h: 0.1 } }, 1, presets), 2);
-  assert.equal(ShotFinder.chooseZoom({ kind: 'object', box: { w: 0.4, h: 0.32 } }, 1, presets), null);
+test('camera motion estimate measures how the scene shifted', () => {
+  // Non-repeating "scene": smooth value noise (real scenes do not repeat like a sine wave).
+  const N = 64, grid = Array.from({ length: N * N }, (_, i) => ((Math.sin(i * 12.9898) * 43758.5453) % 1 + 1) % 1);
+  const noise = (X, Y) => { const gx = X / 9, gy = Y / 9, x0 = Math.floor(gx), y0 = Math.floor(gy), fx = gx - x0, fy = gy - y0; const g = (i, j) => grid[(((j % N) + N) % N) * N + (((i % N) + N) % N)]; return (g(x0, y0) * (1 - fx) + g(x0 + 1, y0) * fx) * (1 - fy) + (g(x0, y0 + 1) * (1 - fx) + g(x0 + 1, y0 + 1) * fx) * fy; };
+  const tex = (ox, oy) => { const w = 192, h = 256, d = new Float32Array(w * h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d[y * w + x] = 255 * noise(x - ox + 40, y - oy + 40); return { data: d, w, h }; };
+  const gm = new GlobalMotion();
+  assert.equal(gm.push(tex(0, 0)).ok, false);
+  const r = gm.push(tex(12, -8));
+  assert.ok(Math.abs(r.dx - 12 / 192) < 0.012 && Math.abs(r.dy + 8 / 256) < 0.012, JSON.stringify(r));
+  assert.equal(r.ok, true);
 });
 
 test('frame helpers', () => {

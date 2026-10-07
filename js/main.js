@@ -28,7 +28,8 @@ import { HoldTrigger, handRaised, isSmiling } from './capture/Triggers.js';
 import { BurstSelector, sharpness } from './capture/BurstSelector.js';
 import { HistogramView } from './ui/Histogram.js';
 import { ShotFinder } from './ai/ShotFinder.js';
-import { TemplateTracker, toGray } from './ai/TemplateTracker.js';
+import { toGray } from './ai/TemplateTracker.js';
+import { GlobalMotion } from './ai/GlobalMotion.js';
 import { objectCandidates, peopleCandidates, saliencyCandidate } from './ai/Candidates.js';
 import { focalLength } from './render/Frames.js';
 import { Overlay } from './ui/Overlay.js';
@@ -85,15 +86,9 @@ class SmartCameraApp {
     this.bursting = false;
     // ✦ Find the shot
     this.finder = new ShotFinder();
-    this.tTracker = new TemplateTracker();
-    this._acquire = null;
-    this.finder.on('acquire', ({ box }) => { this._acquire = { box, at: 0 }; Haptics.tap(); });
-    this.finder.on('zoom', ({ zoom, from }) => {
-      const pred = this.tTracker.zoomBy(zoom / from);
-      this.setZoom(zoom, false);
-      if (pred) this._acquire = { box: pred, at: performance.now() + 450 };
-    });
-    this.finder.on('capture', ({ label, box, head }) => { this.endFinderUI(); this.capture({ auto: true, trigger: 'ai', subject: label, focusY: head ? head.y + 0.06 : box ? box.y + box.h / 2 : null }); });
+    this.gmotion = new GlobalMotion();
+    this.finder.on('zoom', ({ zoom }) => { this.setZoom(zoom, false); this.gmotion.reset(); });
+    this.finder.on('capture', ({ label, crop, focusY }) => { this.endFinderUI(); Haptics.success(); this.capture({ auto: true, trigger: 'ai', subject: label, focusY, crop }); });
     this.finder.on('end', () => this.endFinderUI());
     this.fps = { frames: 0, last: performance.now(), value: 0 };
   }
@@ -531,12 +526,12 @@ class SmartCameraApp {
     if (!this.visionReady) { this.flashStatus('AI is still loading…'); return; }
     if (!this.settings.get('aiEnabled')) this.settings.set('aiEnabled', true);
     clearTimeout(this._statusTimer);
-    this.tracker.reset(); this.tTracker.reset(); this._acquire = null;
+    this.tracker.reset(); this.gmotion.reset();
     this.finder.start(performance.now(), this.style);
-    $('finderText').textContent = this.style.scanText;
-    this.vision.boost = { objects: 2, lighting: 1, scene: 15 };
-    this.controls.setScan('active'); this.controls.setStatus('Finding your shot...', 'yellow');
-    $('finderText').hidden = false; const cnt = $('finderCount'); cnt.hidden = false; cnt.textContent = '3';
+    // Analyse the very next frame with every model.
+    this.vision.boost = { objects: 1, pose: 1, face: 1, lighting: 1, scene: 1 }; this.vision.only = null;
+    this.controls.setScan('active'); this.controls.setStatus('Analysing the frame...', 'yellow');
+    $('finderText').textContent = this.style.scanText; $('finderText').hidden = false; $('finderCount').hidden = true;
     Haptics.tap();
     this.syncVisionRunning();
   }
@@ -544,8 +539,8 @@ class SmartCameraApp {
   endFinderUI() {
     $('finderText').hidden = true; $('finderCount').hidden = true;
     this.controls.setScan('idle');
-    this.vision.boost = {};
-    this.tTracker.reset(); this._acquire = null;
+    this.vision.boost = {}; this.vision.only = null;
+    this.gmotion.reset();
     this.overlay.clear(); this.overlay.targetFilter.reset();
     clearTimeout(this._statusTimer); this.controls.setStatus(this.idleStatus(), 'gray');
     this.syncVisionRunning();
@@ -554,51 +549,34 @@ class SmartCameraApp {
   /** One analysed frame while Find the shot is active. */
   runFinder({ a, view, tracked, lighting, scene, motion, now, selfie }) {
     const f = this.finder;
-    const scanning = f.state === 'SCANNING';
-    this.vision.boost = { objects: scanning ? 2 : 5, lighting: 1, scene: 15 };
-    const gray = a.ran.lighting && a.pixels ? toGray(a.pixels) : null;
-    const cands = [...peopleCandidates(tracked, { selfie }), ...objectCandidates(view.objects)];
-    if (a.pixels && (scanning || f.target?.kind === 'light')) { const sal = saliencyCandidate(a.pixels, { scene }); if (sal) cands.push(sal); }
-    let track = null;
-    if (gray) {
-      if (this._acquire && now >= this._acquire.at) { this.tTracker.init(gray, this._acquire.box); this._acquire = null; }
-      if (this.tTracker.active) {
-        track = this.tTracker.update(gray);
-        // Re-anchor on a fresh detection of the same subject (fixes template drift).
-        const key = f.target?.key;
-        // Light targets (sunset glow) re-anchor on the saliency map every frame: soft gradients
-        // make template matching wander. Objects and people re-anchor on their detections.
-        if (key && track && (f.target.kind === 'light' || a.ran.objects || a.ran.pose)) {
-          const tc = { x: track.box.x + track.box.w / 2, y: track.box.y + track.box.h / 2 };
-          const same = cands.filter((c) => c.key === key).map((c) => ({ c, d: Math.hypot(c.box.x + c.box.w / 2 - tc.x, c.box.y + c.box.h / 2 - tc.y) })).sort((p, q) => p.d - q.d)[0];
-          if (same && same.d < (f.target.kind === 'light' ? 0.22 : 0.15)) { this.tTracker.init(gray, same.c.box); track = { box: same.c.box, confidence: 1, lost: false }; }
-        }
-      }
+    const planning = f.state === 'PLAN';
+    // While aiming only the cheap motion estimate is needed, so skip the models.
+    this.vision.boost = planning ? { objects: 1, pose: 1, face: 1, lighting: 1, scene: 1 } : { lighting: 1 };
+    this.vision.only = planning ? null : ['lighting'];
+    let cands = [];
+    if (planning) {
+      cands = [...peopleCandidates(tracked, { selfie }), ...objectCandidates(view.objects)];
+      if (a.pixels) { const sal = saliencyCandidate(a.pixels, { scene }); if (sal) cands.push(sal); }
     }
-    // People and groups: follow them with the pose tracker directly (robust on any texture).
-    if (f.target && (f.target.kind === 'person' || f.target.kind === 'group')) {
-      const tb = f.target.box, tc = { x: tb.x + tb.w / 2, y: tb.y + tb.h / 2 };
-      const same = cands.filter((c) => c.key === f.target.key).map((c) => ({ c, d: Math.hypot(c.box.x + c.box.w / 2 - tc.x, c.box.y + c.box.h / 2 - tc.y) })).sort((p, q) => p.d - q.d)[0];
-      if (same && same.d < 0.3) { track = { box: same.c.box, head: same.c.head, confidence: 1, lost: false }; if (gray) this.tTracker.init(gray, same.c.box); }
-    }
-    const vm = f.update({ candidates: cands, track, motion, zoom: { current: this.camera.zoom, presets: this.camera.lens.presets() }, lighting }, now);
-    this.renderFinder(vm, motion, now);
+    const shift = !planning && a.ran.lighting && a.pixels ? this.gmotion.push(toGray(a.pixels)) : null;
+    if (planning && a.pixels) this.gmotion.push(toGray(a.pixels));   // reference frame for the motion estimate
+    const fresh = a.ran.objects && a.ran.pose;
+    // Time from when the result arrived (a.t is when the analysis started), so a slow
+    // planning frame does not eat into the time you get to line up the box.
+    const t = Math.max(now, performance.now());
+    const vm = f.update({ candidates: cands, fresh, shift, zoom: { current: this.camera.zoom, presets: this.camera.lens.presets() } }, t);
+    this.renderFinder(vm, motion, t);
   }
 
   renderFinder(vm, motion, now) {
     const c = this.controls;
-    if (vm.state === 'IDLE' || vm.state === 'CAPTURE') {
-      if (vm.message) this.flashStatus(vm.message, vm.tone === 'green' ? 'green' : 'gray');
-      return;
-    }
-    const scanning = vm.state === 'SCANNING';
-    $('finderText').hidden = !scanning;
-    const cnt = $('finderCount'); cnt.hidden = !scanning;
-    if (scanning && cnt.textContent !== String(vm.countdown)) { cnt.textContent = String(vm.countdown); cnt.classList.remove('tick'); void cnt.offsetWidth; cnt.classList.add('tick'); this.sounds.tick(); }
-    if (vm.state === 'READY' && this._lastFinderState !== 'READY') Haptics.success();
-    this._lastFinderState = vm.state;
+    if (vm.state === 'IDLE' || vm.state === 'CAPTURE') return;
+    $('finderText').hidden = vm.state !== 'PLAN';
+    if (vm.state === 'AIM' && this._lastFinderState !== 'AIM') Haptics.tap();
+    if (vm.aligned && !this._wasAligned) Haptics.success();
+    this._wasAligned = !!vm.aligned; this._lastFinderState = vm.state;
     c.setStatus(vm.message || '', vm.tone);
-    c.setScan(vm.state === 'READY' ? 'ready' : 'active');
+    c.setScan('active');
     c.setGuide(null); c.setScores(null, false); c.setScene(null, false); c.setTrigger(null);
     c.setLevel(motion, this.settings.get('horizon'));
     c.setZoom(this.camera.zoom, null);
@@ -687,7 +665,7 @@ class SmartCameraApp {
    * @param o.timer  seconds to count down (defaults to the timer setting for manual shots)
    * @param o.trigger 'pose' | 'hand' | 'smile' | null — recorded with the photo
    */
-  async capture({ auto, timer = null, trigger = null, subject = null, focusY = null }) {
+  async capture({ auto, timer = null, trigger = null, subject = null, focusY = null, crop = null }) {
     if (this.capturing || this.bursting || !this.camera.isRunning) return;
     if (this.finder.active && trigger !== 'ai') this.finder.cancel('manual');
     this.capturing = true; this.controls.setBusy(true);
@@ -702,6 +680,7 @@ class SmartCameraApp {
       const { w, h } = this.viewSize();
       let shot = await this.camera.capture({ viewW: w, viewH: h, mirrorOutput: this.camera.mirror });
       shot = await this.bakeExposure(shot);
+      if (crop) shot = await this.cropShot(shot, crop);
       if (useTorch) this.camera.setTorch(false);
       // Where a later Cinema crop is centred: exactly the live guide band in Cinematic,
       // otherwise around the face (or the subject).
@@ -723,6 +702,20 @@ class SmartCameraApp {
       console.error(e); this.toast.show(`Capture failed: ${e.message}`, 3000);
       this.autoCapture.markCaptured(performance.now());
     } finally { this.capturing = false; this.controls.setBusy(false); }
+  }
+
+  /** Crop a captured shot to a box in view coordinates (the AI's framing when it was not lined up). */
+  async cropShot(shot, box) {
+    const b = { x: Math.max(0, box.x), y: Math.max(0, box.y) };
+    b.w = Math.min(1, box.x + box.w) - b.x; b.h = Math.min(1, box.y + box.h) - b.y;
+    if (b.w < 0.2 || b.h < 0.2) return shot;
+    const x = this.camera.mirror ? 1 - b.x - b.w : b.x;   // the saved image is mirrored like the preview
+    const W = shot.canvas.width, H = shot.canvas.height;
+    const sx = Math.round(x * W), sy = Math.round(b.y * H), sw = Math.round(b.w * W), sh = Math.round(b.h * H);
+    const canvas = document.createElement('canvas'); canvas.width = sw; canvas.height = sh;
+    canvas.getContext('2d', { alpha: false }).drawImage(shot.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
+    return { blob, width: sw, height: sh, canvas };
   }
 
   /** Exposure time / ISO when the browser reports them (Chrome on Android does; Safari does not). */
