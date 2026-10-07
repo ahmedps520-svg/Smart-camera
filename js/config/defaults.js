@@ -157,6 +157,7 @@ export const FILTERS = [
   { id: 'clean', name: 'Clean', params: { brightness: 1.06, contrast: 0.94, saturation: 0.9, temperature: -0.08, fade: 0.03, lift: 0.05, highlights: [0.01, 0.015, 0.025] }, css: 'brightness(1.07) contrast(0.94) saturate(0.9)' },
   { id: 'harbor', name: 'Harbor', params: { temperature: -0.32, tint: -0.04, saturation: 0.78, contrast: 1.1, curve: 0.28, shadows: [-0.03, 0.045, 0.085], highlights: [0.02, 0.03, 0.02], fade: 0.05, vignette: 0.28 }, css: 'saturate(0.8) contrast(1.12) hue-rotate(-10deg) brightness(0.98)' },
   { id: 'dusk', name: 'Dusk', params: { temperature: 0.35, tint: 0.1, saturation: 1.15, curve: 0.22, shadows: [0.06, -0.01, 0.085], highlights: [0.085, 0.03, -0.035], fade: 0.06, vignette: 0.32 }, css: 'sepia(0.3) saturate(1.3) hue-rotate(-12deg) contrast(1.05)' },
+  { id: 'pop', name: 'Pop', params: { brightness: 1.08, contrast: 1.06, saturation: 1.38, temperature: 0.12, tint: 0.03, lift: 0.06, curve: 0.12, highlights: [0.02, 0.01, 0.0] }, css: 'brightness(1.08) saturate(1.4) contrast(1.06)' },
   { id: 'relic', name: 'Relic', params: { temperature: 0.25, saturation: 0.62, contrast: 0.9, fade: 0.14, grain: 0.07, vignette: 0.45, curve: 0.1, shadows: [0.04, 0.02, -0.02], highlights: [0.04, 0.02, -0.045] }, css: 'sepia(0.45) saturate(0.7) contrast(0.88) brightness(1.04)' },
   { id: 'warm', name: 'Warm', params: { temperature: 0.4, tint: 0.04, saturation: 1.2, contrast: 1.06, brightness: 1.03 }, css: 'sepia(0.35) saturate(1.4) brightness(1.04)' },
   { id: 'cool', name: 'Cool', params: { temperature: -0.45, tint: -0.02, saturation: 1.05, contrast: 1.08, highlights: [-0.02, 0.01, 0.05] }, css: 'saturate(1.1) hue-rotate(-12deg) brightness(1.03) contrast(1.08)' },
@@ -167,6 +168,59 @@ export const FILTERS = [
   { id: 'contrast', name: 'High Contrast', params: { contrast: 1.45, curve: 0.6, saturation: 1.2, vignette: 0.25 }, css: 'contrast(1.6) saturate(1.2)' },
   { id: 'golden', name: 'Golden Hour', params: { temperature: 0.6, tint: 0.05, saturation: 1.35, curve: 0.25, brightness: 1.05, highlights: [0.1, 0.05, -0.06], shadows: [0.04, 0, -0.04], vignette: 0.35 }, css: 'sepia(0.55) saturate(1.6) brightness(1.06) contrast(1.08)' },
   { id: 'night', name: 'Night', params: { brightness: 1.3, lift: 0.25, temperature: -0.22, saturation: 0.8, contrast: 1.1, curve: 0.15, grain: 0.03 }, css: 'brightness(1.4) contrast(1.1) saturate(0.8)' },
+];
+
+/**
+ * AI styles for ✦ Find the shot. Each style changes what the AI looks for
+ * (weights per subject kind), where it puts the subject (aim), how far it
+ * zooms (zoomScale, continuous, maxZoom), how quickly it shoots, and the look
+ * and frame the photo gets. Everything else in the pipeline is shared.
+ */
+export const AI_STYLES = [
+  {
+    id: 'standard', name: 'Standard', tagline: 'balanced framing',
+    scanText: 'AI is finding the shot...', scanMs: 3000, minScanFrames: 5,
+    weights: {}, aim: 'center', zoomScale: 1, continuous: false,
+    readyHoldMs: 1300, minStability: 0.6, tolScale: 1, look: null, frame: null,
+  },
+  {
+    id: 'daily', name: 'Daily', tagline: 'quick and natural',
+    scanText: 'Quick shot...', scanMs: 1500, minScanFrames: 3,
+    weights: { person: 1.1 }, aim: 'center', zoomScale: 0.85, maxZoom: 2, continuous: false,
+    readyHoldMs: 600, minStability: 0.5, tolScale: 1.5, look: 'natural', frame: 'none',
+  },
+  {
+    id: 'cinematic', name: 'Cinematic', tagline: 'tight, widescreen, moody',
+    scanText: 'Finding a cinematic shot...', scanMs: 3200, minScanFrames: 5,
+    weights: { person: 1.15, vehicle: 1.2, light: 1.15, object: 0.85 }, aim: 'thirds', zoomScale: 1.8, continuous: true,
+    readyHoldMs: 1700, minStability: 0.7, tolScale: 0.9, look: 'cinematic', frame: 'cinema', letterbox: true, faceAim: 0.49, faceBand: [0.03, 0.04],
+    readyText: 'Rolling — hold it steady.',
+  },
+  {
+    id: 'snapchat', name: 'Snapchat', tagline: 'faces up close, full screen',
+    scanText: 'Finding your snap...', scanMs: 1200, minScanFrames: 3,
+    weights: { person: 1.6, group: 1.5, animal: 1.2, light: 0.6, object: 0.7 }, aim: 'center', faceAim: 0.36, faceBand: [0.14, 0.09], personFrac: 0.85,
+    zoomScale: 1.15, continuous: true, maxZoom: 3, readyHoldMs: 550, minStability: 0.45, tolScale: 1.4,
+    look: 'pop', frame: 'none', aspect: 'full', readyText: 'Looking good — hold it!',
+  },
+  {
+    id: 'scenic', name: 'Scenic', tagline: 'wide views, level horizon',
+    scanText: 'Finding the view...', scanMs: 3000, minScanFrames: 5,
+    weights: { light: 1.7, person: 0.6, group: 0.6, object: 0.7 }, aim: 'center', lightAimY: 0.42, zoom: 'wide',
+    readyHoldMs: 1400, minStability: 0.65, tolScale: 1.3, requireLevel: true, look: 'vibrant', frame: null,
+  },
+  {
+    id: 'street', name: 'Street', tagline: 'the decisive moment',
+    scanText: 'Finding the moment...', scanMs: 1500, minScanFrames: 3,
+    weights: { person: 1.3, vehicle: 1.2, animal: 1.1, light: 0.7 }, aim: 'thirds', zoomScale: 1.1, maxZoom: 2, continuous: false,
+    readyHoldMs: 450, minStability: 0.45, tolScale: 1.3, look: 'bw', frame: null,
+  },
+  {
+    id: 'film', name: 'Film', tagline: 'vintage colour, date stamp',
+    scanText: 'Finding a film moment...', scanMs: 2500, minScanFrames: 4,
+    weights: { light: 1.1 }, aim: 'thirds', zoomScale: 1, continuous: false,
+    readyHoldMs: 1200, minStability: 0.6, tolScale: 1.1, look: 'relic', frame: 'date',
+  },
 ];
 
 export const SCENES = [
@@ -195,6 +249,7 @@ export const DEFAULT_SETTINGS = {
   filterStrength: 1,         // 0 … 1.5
   aspect: '4:3',             // full | 4:3 | 16:9
   deviceName: 'iPhone 18 Pro', // printed on the Specs frame
+  aiStyle: 'standard',       // ✦ Find the shot style (see AI_STYLES)
   frame: 'none',             // default frame style in the editor
   exposure: 0,
   filter: 'natural',

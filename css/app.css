@@ -355,3 +355,12 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 /* Framed shapes: the controls fill the space under the viewfinder, centred like the reference. */
 .app[data-aspect="4:3"] .bottombar, .app[data-aspect="16:9"] .bottombar { top: var(--vf-bottom, auto); justify-content: center; gap: 12px; }
 @media (orientation: landscape) and (max-height: 500px) { .app .bottombar { top: 0 !important; } }
+
+.frame-opt[data-id="cinema"] i { background: #000; }
+.frame-opt[data-id="cinema"] i::after { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 8px; background: #6b6b70; }
+
+/* AI style picker (above the shutter, like the Camera app's mode row). */
+.styles { display: flex; gap: 18px; overflow-x: auto; max-width: 100%; padding: 2px calc(50% - 40px); scrollbar-width: none; touch-action: pan-x; scroll-snap-type: x mandatory; -webkit-mask-image: linear-gradient(to right, transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(to right, transparent, #000 18%, #000 82%, transparent); }
+.styles::-webkit-scrollbar { display: none; }
+.style-opt { flex: 0 0 auto; scroll-snap-align: center; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #8e8e93; padding: 4px 0; transition: color 0.2s; }
+.style-opt[aria-selected="true"] { color: var(--yellow); }

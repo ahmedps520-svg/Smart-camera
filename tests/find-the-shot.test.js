@@ -105,5 +105,5 @@ test('frame helpers', () => {
   assert.equal(specsLine({ zoom: 2, exposureTime: 0.01, iso: 80 }), '48mm   2×   1/100s   ISO80');
   assert.equal(specsLine({ zoom: 1 }), '24mm');
   assert.equal(dateStamp(new Date(2026, 9, 7)), "'26  10  07");
-  assert.deepEqual(FRAMES.map((f) => f.name), ['Original', 'White', 'Paper', 'Specs', 'Date']);
+  assert.deepEqual(FRAMES.map((f) => f.name), ['Original', 'White', 'Paper', 'Specs', 'Date', 'Cinema']);
 });

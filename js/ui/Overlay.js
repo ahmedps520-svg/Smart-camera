@@ -47,6 +47,7 @@ export class Overlay {
    */
   draw(s) {
     const ctx = this.ctx; this.clear();
+    if (this.options.letterbox) this.drawLetterbox(ctx);
     const m = this.mapper();
     if (this.options.grid && this.options.grid !== 'off') this.drawGrid(ctx, this.options.grid);
     if (this.options.horizon && s.motion?.available && !s.motion.flat) this.drawHorizon(ctx, s.motion);
@@ -153,6 +154,19 @@ export class Overlay {
     ctx.fillStyle = r.perfect ? color : '#fff';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(text, lx + lw / 2, ly + lh / 2 + 0.5);
+    ctx.restore();
+  }
+
+  /** Cinematic: dim everything outside a centred 2.39:1 band (what the Cinema frame keeps). */
+  drawLetterbox(ctx) {
+    const bh = Math.min(this.h, this.w / 2.39), y = (this.h - bh) / 2;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, this.w, y); ctx.fillRect(0, y + bh, this.w, this.h - y - bh);
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(this.w, y + 0.5); ctx.moveTo(0, y + bh - 0.5); ctx.lineTo(this.w, y + bh - 0.5); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '600 10px -apple-system, system-ui, sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText('2.39 : 1', this.w - 8, y - 6);
     ctx.restore();
   }
 

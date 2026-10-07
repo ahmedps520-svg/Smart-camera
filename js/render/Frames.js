@@ -5,6 +5,7 @@
  *  - paper  warm off-white paper border with a fine fibre texture
  *  - specs  instant-film style border with "Shot on …" and the camera specs
  *  - date   orange film date stamp in the corner
+ *  - cinema 2.39:1 widescreen still around the subject, letterboxed in 16:9
  */
 export const FRAMES = [
   { id: 'none', name: 'Original' },
@@ -12,7 +13,15 @@ export const FRAMES = [
   { id: 'paper', name: 'Paper' },
   { id: 'specs', name: 'Specs' },
   { id: 'date', name: 'Date' },
+  { id: 'cinema', name: 'Cinema' },
 ];
+
+/** Widescreen band (2.39:1) for the Cinema frame, centred on focusY (0…1), in pixels. */
+export function cinemaBand(w, h, focusY = 0.5) {
+  const bh = Math.min(h, Math.round(w / 2.39));
+  const y = Math.round(Math.min(h - bh, Math.max(0, focusY * h - bh / 2)));
+  return { y, h: bh };
+}
 
 /** Equivalent focal length on iPhone-style lenses: 13 mm ultra wide, 24 mm main, × zoom; 23 mm front. */
 export function focalLength({ zoom = 1, selfie = false } = {}) {
@@ -61,6 +70,15 @@ export function applyFrame(src, id, info = {}) {
     c.shadowColor = 'rgba(255,120,30,0.85)'; c.shadowBlur = size * 0.35;
     c.fillStyle = '#ff9a3c';
     c.fillText(dateStamp(info.date), w - m * 0.05, h - m * 0.05);
+    return out;
+  }
+
+  if (id === 'cinema') {
+    const band = cinemaBand(w, h, info.focusY ?? 0.5);
+    const H = Math.max(band.h, Math.round(w * 9 / 16));
+    out.width = w; out.height = H;
+    const c = ctx(); c.fillStyle = '#000'; c.fillRect(0, 0, w, H);
+    c.drawImage(src, 0, band.y, w, band.h, 0, Math.round((H - band.h) / 2), w, band.h);
     return out;
   }
 

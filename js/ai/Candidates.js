@@ -47,7 +47,7 @@ export function peopleCandidates(tracked, { selfie = false } = {}) {
   }
   return tracked.subjects.filter((s) => !s.coasting).map((s) => {
     const box = clampBox(s.box);
-    return { key: 'person', label: selfie ? 'you' : describe('person', box), kind: 'person', box, score: Math.min(1, 0.75 + Math.min(0.25, box.h)) };
+    return { key: 'person', label: selfie ? 'you' : describe('person', box), kind: 'person', box, head: s.head ? { x: s.head.x, y: s.head.y } : null, score: Math.min(1, 0.75 + Math.min(0.25, box.h)) };
   });
 }
 

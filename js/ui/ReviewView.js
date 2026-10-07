@@ -55,7 +55,8 @@ export class ReviewView extends Emitter {
   /** Look thumbnails rendered from the current photo (square crop, tiny, GPU). */
   buildLooks() {
     const strip = this.el.looks; strip.innerHTML = '';
-    const order = ['natural', 'clean', 'harbor', 'dusk', 'relic', ...FILTERS.map((f) => f.id).filter((id) => !['natural', 'clean', 'harbor', 'dusk', 'relic'].includes(id))];
+    const first = ['natural', 'clean', 'harbor', 'dusk', 'relic', 'pop', 'cinematic'];
+    const order = [...first, ...FILTERS.map((f) => f.id).filter((id) => !first.includes(id))];
     const S = 108, bm = this.bitmap;
     const base = document.createElement('canvas'); base.width = S; base.height = S;
     const side = Math.min(bm.width, bm.height);
@@ -92,7 +93,8 @@ export class ReviewView extends Emitter {
     this.recommended = recommendedFilter || m.filter || 'natural';
     this.strength = strength ?? m.strength ?? 1;
     this.el.strength.value = this.strength; this.el.strengthV.textContent = `${Math.round(this.strength * 100)}%`;
-    const bits = [m.subject, m.scene, m.portrait ? 'depth' : null, m.burst ? `best of ${m.burst}` : null, m.selfie ? 'selfie' : null].filter(Boolean);
+    const styleName = m.style && m.style !== 'standard' ? m.style : null;
+    const bits = [styleName, m.subject, m.scene, m.portrait ? 'depth' : null, m.burst ? `best of ${m.burst}` : null, m.selfie ? 'selfie' : null].filter(Boolean);
     this.el.meta.textContent = [...new Set(bits)].join('  ·  ');
     this.el.counter.textContent = `${i + 1} / ${this.list.length}`;
     this.renderFav();
@@ -142,7 +144,7 @@ export class ReviewView extends Emitter {
 
   frameInfo() {
     const m = this.record?.meta || {};
-    return { date: new Date(m.takenAt || this.record?.createdAt || Date.now()), device: this.settings?.get('deviceName') || 'iPhone', specs: specsLine(m) };
+    return { date: new Date(m.takenAt || this.record?.createdAt || Date.now()), device: this.settings?.get('deviceName') || 'iPhone', specs: specsLine(m), focusY: m.focusY ?? 0.5 };
   }
 
   isEdited() {

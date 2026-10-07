@@ -19,6 +19,22 @@ The default camera is calm: a 3:4 viewfinder with a grid, and one line of text u
 
 ✕ cancels at any time, and ↻ scans again. Smart guide, Smart Pose and Portrait are in the ••• menu.
 
+### AI styles
+
+Pick a style in the row above the shutter, or swipe left/right on the viewfinder. Each style changes what ✦ looks for, where it puts the subject, how far it zooms, how fast it shoots, and the look and frame the photo opens with.
+
+| Style | What it does |
+| --- | --- |
+| **Standard** | Balanced: 3 s scan, subject centred, optical lens choice, the AI's recommended look |
+| **Daily** | Quick and natural: 1.5 s scan, little zoom (≤2×), looser centring, shoots fast, no filter |
+| **Cinematic** | Zooms in ~1.8× tighter with smooth continuous zoom, subject on a third, faces steered into a live 2.39:1 widescreen guide, slower steadier capture, Cinematic look and a **Cinema** letterbox frame |
+| **Snapchat** | Full-screen vertical, strongly prefers people, steers by the face (upper band of the frame), frames close, shoots fast, punchy **Pop** look |
+| **Scenic** | Prefers the light and the view, goes to the widest lens, waits for a level horizon, Vibrant look |
+| **Street** | The decisive moment: fast scan and capture, subject on a third, ≤2×, B&W look |
+| **Film** | Subject on a third, Relic film look with the orange **Date** stamp |
+
+Styles are data (`AI_STYLES` in `js/config/defaults.js`), so new ones can be added without touching the logic. Before a large zoom the finder centres more precisely, so the subject is still framed after zooming.
+
 ## What it does
 
 | Area | Implementation |
@@ -142,7 +158,7 @@ video frame ─▶ VisionEngine (pose · face · objects · scene · pixels)
 ## Tests
 
 ```bash
-npm test          # node --test tests/*.test.js — 66 unit tests over the pure logic modules
+npm test          # node --test tests/*.test.js — 76 unit tests over the pure logic modules
 ```
 
 Browser verification during development used headless Chromium with a fake camera fed by real test images (person, portrait, food, animals): models load from the vendored files, a person is detected and tracked, guidance and the composition box appear, the scene classifier maps labels (cheeseburger → food, cats/dogs → pet, seashore → beach), the shutter saves a full-resolution JPEG to the library with post-capture analysis, and Smart Pose auto-captures after the hold window and countdown.

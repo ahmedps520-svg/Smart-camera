@@ -3,7 +3,7 @@
  * that connects camera, vision, analysis, reasoning, capture, library and UI).
  * Everything runs on-device; there is no network code in the app at all.
  */
-import { OVERALL, COMPOSITION, SMART_PHOTO } from './config/defaults.js';
+import { OVERALL, COMPOSITION, SMART_PHOTO, AI_STYLES } from './config/defaults.js';
 import { Settings } from './settings/Settings.js';
 import { CameraController } from './camera/CameraController.js';
 import { MotionSensor } from './motion/MotionSensor.js';
@@ -93,12 +93,20 @@ class SmartCameraApp {
       this.setZoom(zoom, false);
       if (pred) this._acquire = { box: pred, at: performance.now() + 450 };
     });
-    this.finder.on('capture', ({ label }) => { this.endFinderUI(); this.capture({ auto: true, trigger: 'ai', subject: label }); });
+    this.finder.on('capture', ({ label, box, head }) => { this.endFinderUI(); this.capture({ auto: true, trigger: 'ai', subject: label, focusY: head ? head.y + 0.06 : box ? box.y + box.h / 2 : null }); });
     this.finder.on('end', () => this.endFinderUI());
     this.fps = { frames: 0, last: performance.now(), value: 0 };
   }
 
   get selfie() { return this.camera.facing === 'user'; }
+
+  /** Current AI style (Standard, Daily, Cinematic, Snapchat, Scenic, Street, Film). */
+  get style() { return AI_STYLES.find((x) => x.id === this.settings.get('aiStyle')) || AI_STYLES[0]; }
+
+  /** Look used for the preview and new photos: an explicit filter wins, otherwise the style's look. */
+  effectiveLook() { const f = this.settings.get('filter'); return f && f !== 'natural' ? f : (this.style.look || 'natural'); }
+
+  effectiveAspect() { return this.style.aspect || this.settings.get('aspect'); }
 
   // ---------------------------------------------------------------- boot
   async boot() {
@@ -198,7 +206,7 @@ class SmartCameraApp {
 
   layoutViewport() {
     this.adjustTopInset();
-    const aspect = this.settings.get('aspect');
+    const aspect = this.effectiveAspect();
     const W = window.innerWidth, H = window.innerHeight;
     const st = this.viewport.style;
     if (aspect === 'full') { st.top = '0px'; st.bottom = '0px'; st.left = '0px'; st.right = '0px'; st.height = ''; st.width = ''; }
@@ -266,7 +274,7 @@ class SmartCameraApp {
               this.renderer.setBackground(bgCanvas); this._bgReady = true;
             }
           }
-          const ok = this.renderer.draw(this.video, { crop, mirror: this.camera.mirror, params: composeParams(s.get('filter'), s.get('filterStrength'), this.softwareEV() ? { ev: this.softwareEV() } : null), seed: (performance.now() % 1000) / 1000, depth: this.depthLive > 0.01 ? this.depthLive : 0, zebra: s.get('zebra') });
+          const ok = this.renderer.draw(this.video, { crop, mirror: this.camera.mirror, params: composeParams(this.effectiveLook(), s.get('filterStrength'), this.softwareEV() ? { ev: this.softwareEV() } : null), seed: (performance.now() % 1000) / 1000, depth: this.depthLive > 0.01 ? this.depthLive : 0, zebra: s.get('zebra') });
           if (!ok) { this.renderer.ok = false; $('app').classList.remove('gpu'); this.applyPreviewFallback(); }
         }
       }
@@ -288,6 +296,7 @@ class SmartCameraApp {
     c.on('burstStart', () => this.burstStart());
     c.on('burstEnd', () => this.burstEnd());
     c.on('scan', () => this.toggleScan());
+    c.on('styleStep', (d) => { const i = AI_STYLES.findIndex((x) => x.id === this.style.id); const n = AI_STYLES[(i + d + AI_STYLES.length) % AI_STYLES.length]; this.settings.set('aiStyle', n.id); });
     c.on('flip', () => this.switchFacing(this.selfie ? 'environment' : 'user'));
     c.on('selfie', () => this.switchFacing(this.selfie ? 'environment' : 'user'));
     c.on('flash', (v) => { s.set('flash', v); Haptics.tap(); });
@@ -343,7 +352,9 @@ class SmartCameraApp {
     $('histogram').hidden = !s.get('histogram');
     c.setAperture(mode === 'portrait');
     c.syncTopIcons({ grid: s.get('grid'), horizon: s.get('horizon') });
-    $('app').dataset.aspect = s.get('aspect');
+    $('app').dataset.aspect = this.effectiveAspect();
+    this.overlay.options.letterbox = !!this.style.letterbox;
+    c.setStyle(this.style.id, key === 'aiStyle');
     if (!this.finder.active && (key === 'mode' || key === undefined)) c.setStatus(this.idleStatus(), 'gray');
     if (key === 'portraitBlur' || key === undefined) { $('apertureSlider').value = s.get('portraitBlur'); c.setApertureLabel(s.get('portraitBlur')); }
     if (key === 'grid' || key === undefined) $('ctlGrid').value = s.get('grid');
@@ -351,7 +362,13 @@ class SmartCameraApp {
     this.sounds.enabled = s.get('sound'); Haptics.enabled = s.get('haptics');
     this.autoCapture.configure({ holdMs: s.get('holdMs'), thresholds: { overall: s.get('autoThreshold') } });
     this.vision.governor.setMode(s.get('rate'));
-    if (key === 'aspect') { this.layoutViewport(); this.tracker.reset(); this.reasoner.reset(); this.photoReasoner.reset(); }
+    if (key === 'aspect' || key === 'aiStyle') { this.layoutViewport(); this.tracker.reset(); this.reasoner.reset(); this.photoReasoner.reset(); }
+    if (key === 'aiStyle') {
+      if (this.finder.active) this.finder.cancel('style');
+      if (this.camera.isRunning && Math.abs(this.camera.zoom - 1) > 0.01) this.setZoom(1, true);
+      this.flashStatus(`${this.style.name} — ${this.style.tagline}`, 'yellow', 2200);
+      Haptics.tap();
+    }
     if (key === 'mirrorFront' || key === undefined) { this.camera.mirror = this.camera.facing === 'user' && s.get('mirrorFront'); this.overlay.options.mirror = this.camera.mirror; if (this.camera.isRunning) this.camera.applyVideoTransform(); }
     if (key === 'exposure' && this.camera.isRunning && this.camera.supportsExposure) this.camera.setExposureCompensation(s.get('exposure'));
     if (key === 'mode' || key === 'aiEnabled' || key === undefined) {
@@ -515,7 +532,8 @@ class SmartCameraApp {
     if (!this.settings.get('aiEnabled')) this.settings.set('aiEnabled', true);
     clearTimeout(this._statusTimer);
     this.tracker.reset(); this.tTracker.reset(); this._acquire = null;
-    this.finder.start(performance.now());
+    this.finder.start(performance.now(), this.style);
+    $('finderText').textContent = this.style.scanText;
     this.vision.boost = { objects: 2, lighting: 1, scene: 15 };
     this.controls.setScan('active'); this.controls.setStatus('Finding your shot...', 'yellow');
     $('finderText').hidden = false; const cnt = $('finderCount'); cnt.hidden = false; cnt.textContent = '3';
@@ -561,7 +579,7 @@ class SmartCameraApp {
     if (f.target && (f.target.kind === 'person' || f.target.kind === 'group')) {
       const tb = f.target.box, tc = { x: tb.x + tb.w / 2, y: tb.y + tb.h / 2 };
       const same = cands.filter((c) => c.key === f.target.key).map((c) => ({ c, d: Math.hypot(c.box.x + c.box.w / 2 - tc.x, c.box.y + c.box.h / 2 - tc.y) })).sort((p, q) => p.d - q.d)[0];
-      if (same && same.d < 0.3) { track = { box: same.c.box, confidence: 1, lost: false }; if (gray) this.tTracker.init(gray, same.c.box); }
+      if (same && same.d < 0.3) { track = { box: same.c.box, head: same.c.head, confidence: 1, lost: false }; if (gray) this.tTracker.init(gray, same.c.box); }
     }
     const vm = f.update({ candidates: cands, track, motion, zoom: { current: this.camera.zoom, presets: this.camera.lens.presets() }, lighting }, now);
     this.renderFinder(vm, motion, now);
@@ -669,7 +687,7 @@ class SmartCameraApp {
    * @param o.timer  seconds to count down (defaults to the timer setting for manual shots)
    * @param o.trigger 'pose' | 'hand' | 'smile' | null — recorded with the photo
    */
-  async capture({ auto, timer = null, trigger = null, subject = null }) {
+  async capture({ auto, timer = null, trigger = null, subject = null, focusY = null }) {
     if (this.capturing || this.bursting || !this.camera.isRunning) return;
     if (this.finder.active && trigger !== 'ai') this.finder.cancel('manual');
     this.capturing = true; this.controls.setBusy(true);
@@ -685,13 +703,22 @@ class SmartCameraApp {
       let shot = await this.camera.capture({ viewW: w, viewH: h, mirrorOutput: this.camera.mirror });
       shot = await this.bakeExposure(shot);
       if (useTorch) this.camera.setTorch(false);
-      const record = await this.saveShot(shot, { auto, trigger: trigger || (auto ? 'pose' : null), subject });
+      // Where a later Cinema crop is centred: exactly the live guide band in Cinematic,
+      // otherwise around the face (or the subject).
+      const prim = this.state.tracked?.primary;
+      const fy = this.style.letterbox ? 0.5 : (focusY ?? (prim?.head ? prim.head.y + 0.06 : prim ? prim.box.y + prim.box.h / 2 : 0.5));
+      const record = await this.saveShot(shot, { auto, trigger: trigger || (auto ? 'pose' : null), subject, focusY: fy });
       this.autoCapture.markCaptured(performance.now());
       this.handTrigger.block(performance.now(), 2500); this.smileTrigger.block(performance.now());
       this.controls.setCountdown(null);
       const label = { hand: 'Captured ✋', smile: 'Captured 😊' }[trigger] || 'Captured';
       if (auto && trigger !== 'ai') this.toast.show(label, 1400);
-      else { this.vision.stop(); await this.review.show(record, { recommendedFilter: record.meta.filter, initialFilter: trigger === 'ai' ? record.meta.filter : record.meta.look, strength: record.meta.strength }); }
+      else {
+        this.vision.stop();
+        // AI shots open with the style's look (or the AI's recommendation in Standard).
+        const initial = trigger === 'ai' && !this.style.look && this.settings.get('filter') === 'natural' ? record.meta.filter : record.meta.look;
+        await this.review.show(record, { recommendedFilter: record.meta.filter, initialFilter: initial, strength: record.meta.strength });
+      }
     } catch (e) {
       console.error(e); this.toast.show(`Capture failed: ${e.message}`, 3000);
       this.autoCapture.markCaptured(performance.now());
@@ -725,7 +752,7 @@ class SmartCameraApp {
    */
   async saveShot(shot, extraMeta = {}) {
     const s = this.settings;
-    const look = s.get('filter'), strength = s.get('filterStrength');
+    const look = this.effectiveLook(), strength = s.get('filterStrength');
     let maskBlob = null, maskCanvas = null;
     if (s.get('mode') === 'portrait' && this.portraitReady) {
       try {
@@ -748,7 +775,8 @@ class SmartCameraApp {
         scene: this.state.scene, scores: this.state.scores, lighting: { advice: processed.lighting.advice, score: processed.lighting.score }, filter: processed.filter.id,
         look, strength, zoom: this.camera.zoom, mode: s.get('mode'), selfie: this.selfie, composition: this.state.composition?.type,
         portrait: !!maskBlob, depth: maskBlob ? s.get('portraitBlur') : 0, depthDefault: maskBlob ? s.get('portraitBlur') : 0,
-        focal: focalLength({ zoom: this.camera.zoom, selfie: this.selfie }), ...this.exposureInfo(), takenAt: Date.now(), ...extraMeta,
+        focal: focalLength({ zoom: this.camera.zoom, selfie: this.selfie }), ...this.exposureInfo(), takenAt: Date.now(),
+        style: this.style.id, ...(this.style.frame ? { frame: this.style.frame } : {}), ...extraMeta,
       },
     });
     this.refreshThumb(await this.library.count(), record);

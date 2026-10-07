@@ -1,5 +1,5 @@
 import { Emitter } from '../util/events.js';
-import { FILTERS, ZOOM } from '../config/defaults.js';
+import { FILTERS, ZOOM, AI_STYLES } from '../config/defaults.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -74,6 +74,11 @@ export class Controls extends Emitter {
     const asp = $('ctlAspect'); asp.value = s.get('aspect'); asp.addEventListener('change', () => this.emit('setting', { key: 'aspect', value: asp.value }));
     const dir = $('ctlDirection'); dir.value = s.get('direction'); dir.addEventListener('change', () => this.emit('setting', { key: 'direction', value: dir.value }));
 
+    // AI styles row.
+    const styles = $('styles');
+    for (const st of AI_STYLES) { const b = document.createElement('button'); b.className = 'style-opt'; b.dataset.style = st.id; b.setAttribute('role', 'tab'); b.textContent = st.name; styles.appendChild(b); }
+    styles.addEventListener('click', (ev) => { const b = ev.target.closest('.style-opt'); if (b) this.emit('setting', { key: 'aiStyle', value: b.dataset.style }); });
+
     // Filters.
     for (const f of FILTERS) { const b = document.createElement('button'); b.className = 'filter-chip'; b.dataset.id = f.id; b.textContent = f.name; b.addEventListener('click', () => this.emit('setting', { key: 'filter', value: f.id })); e.filters.appendChild(b); }
 
@@ -81,7 +86,8 @@ export class Controls extends Emitter {
     this.pointers = new Map(); this.pinchStart = null; this.tapStart = null;
     e.viewport.addEventListener('pointerdown', (ev) => { this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; this.pinchStart = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom: this.currentZoom || 1 }; this.tapStart = null; } else if (this.pointers.size === 1) this.tapStart = { x: ev.clientX, y: ev.clientY, t: performance.now() }; });
     e.viewport.addEventListener('pointermove', (ev) => { if (!this.pointers.has(ev.pointerId)) return; this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); if (this.pointers.size === 2 && this.pinchStart) { const [a, b] = [...this.pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); this.emit('zoom', this.pinchStart.zoom * (d / this.pinchStart.d)); } });
-    const up = (ev) => { const p = this.tapStart; this.pointers.delete(ev.pointerId); if (this.pointers.size < 2) this.pinchStart = null; if (p && this.pointers.size === 0 && performance.now() - p.t < 350 && Math.hypot(ev.clientX - p.x, ev.clientY - p.y) < 10) { const r = e.viewport.getBoundingClientRect(); this.emit('focus', { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height, px: ev.clientX - r.left, py: ev.clientY - r.top }); } this.tapStart = null; };
+    const up = (ev) => { const p = this.tapStart; this.pointers.delete(ev.pointerId);
+      if (p && this.pointers.size === 0) { const dx = ev.clientX - p.x, dy = ev.clientY - p.y; if (Math.abs(dx) > 60 && Math.abs(dy) < 45 && performance.now() - p.t < 700) { this.tapStart = null; this.emit('styleStep', dx < 0 ? 1 : -1); return; } } if (this.pointers.size < 2) this.pinchStart = null; if (p && this.pointers.size === 0 && performance.now() - p.t < 350 && Math.hypot(ev.clientX - p.x, ev.clientY - p.y) < 10) { const r = e.viewport.getBoundingClientRect(); this.emit('focus', { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height, px: ev.clientX - r.left, py: ev.clientY - r.top }); } this.tapStart = null; };
     e.viewport.addEventListener('pointerup', up); e.viewport.addEventListener('pointercancel', up);
     // Close the panel when tapping the preview.
     e.viewport.addEventListener('pointerdown', () => { if (e.panel.classList.contains('open')) this.togglePanel(false); this.closePopovers(); });
@@ -129,6 +135,10 @@ export class Controls extends Emitter {
   setApertureLabel(v) { const f = Controls.fNumber(v); $('apertureF').textContent = `f/${f < 10 ? f.toFixed(1) : Math.round(f)}`; }
   setAperture(visible) { $('aperture').hidden = !visible; }
   setTrigger(text) { const c = $('triggerChip'); c.hidden = !text; if (text) c.textContent = text; }
+  setStyle(id, smooth = true) {
+    for (const b of $('styles').querySelectorAll('.style-opt')) b.setAttribute('aria-selected', String(b.dataset.style === id));
+    $('styles').querySelector(`[data-style="${id}"]`)?.scrollIntoView?.({ inline: 'center', block: 'nearest', behavior: smooth ? 'smooth' : 'auto' });
+  }
   setSelfie(on) { this.el.btnSelfie.setAttribute('aria-pressed', String(on)); }
   setGuide(rec, sub = '', { small = false } = {}) {
     const p = this.el.guidePill;
